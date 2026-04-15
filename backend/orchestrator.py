@@ -8,11 +8,11 @@ from ai_engine.multi_crawler import crawl
 from ai_engine.data_pipeline import process_data
 from ai_engine.signal_detector import detect_signals
 from ai_engine.signal_ranking_engine import merge_ranked_signals
+from ai_engine.signal_cluster import cluster_signals
+from ai_engine.global_crisis_radar import detect_crisis_signals
 
 from ai_engine.global_intelligence_engine import GlobalIntelligenceEngine
 from ai_engine.decision_engine import DecisionEngine
-from ai_engine.signal_cluster import cluster_signals
-from ai_engine.global_crisis_radar import detect_crisis_signals
 
 from backend.storage import save_post
 
@@ -21,6 +21,9 @@ LAST_DATA = []
 duplicate_cache = {}
 
 
+# -------------------------
+# DUPLICATE FILTER
+# -------------------------
 def is_duplicate(topic):
     try:
         time_bucket = int(time.time() / 300)
@@ -66,24 +69,28 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
             print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
-            # 3. SIGNALS
+            # 3. SIGNAL DETECTION
             # -------------------------
             signals = detect_signals(raw)
 
             if not signals:
                 signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
+                    {
+                        "topic": str(x.get("title") or "fallback"),
+                        "score": 1.0,
+                        "urgency": "low"
+                    }
                     for x in raw[:5]
                 ]
 
@@ -102,19 +109,22 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS ENRICHMENT (FIXED)
             # -------------------------
             for s in signals:
 
                 topic = str(s.get("topic", "")).lower()
 
-                if topic in crisis_map:
-                    crisis = crisis_map[topic]
+                for key, crisis in crisis_map.items():
+                    if key in topic or topic in key:
 
-                    s["urgency"] = crisis.get("urgency", "high")
+                        s["urgency"] = crisis.get("urgency", "high")
 
-                    # 🔥 priority boost
-                    s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
+                        # 🔥 güçlü boost
+                        s["score"] = min(s.get("score", 0.5) + 0.4, 1.0)
+
+                        s["crisis"] = crisis
+                        break
 
             # -------------------------
             # 7. DECISION
@@ -134,13 +144,20 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
-            for i, item in enumerate(intel_items):
-                if i < len(decisions):
-                    item["decision"] = decisions[i].get("decision", {})
+            print("INTEL OUTPUT COUNT:", len(intel_items))
+
+            # 🔥 decision mapping FIX
+            decision_map = {
+                str(d.get("topic", "")).lower(): d.get("decision", {})
+                for d in decisions
+            }
+
+            for item in intel_items:
+                topic = str(item.get("topic", "")).lower()
+                item["decision"] = decision_map.get(topic, {})
 
             # -------------------------
-            # 9. GENERATION
+            # 9. GENERATION (🔥 FIXED)
             # -------------------------
             generated = 0
 
@@ -155,17 +172,35 @@ class Orchestrator:
                     if is_duplicate(topic):
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    decision = item.get("decision", {})
+                    priority = decision.get("priority", 0)
+
+                    # 🔥 SOFT PUBLISH ENGINE
+                    publish = (
+                        decision.get("publish", False)
+                        or priority > 0.25
+                        or "crisis" in item
+                    )
 
                     if not publish:
-                        print("SKIPPED:", topic)
+                        print("SKIPPED:", topic, "| priority:", priority)
                         continue
 
                     narrative = item.get("narrative") or {}
 
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
+
+                    source = item.get("source") or item.get("origin") or "Public Data"
+
+                    content = f"""
+{content}
+
+---
+
+Source: {source}
+Disclaimer: AI-generated analysis.
+"""
 
                     print("GENERATING:", title)
 
@@ -174,7 +209,7 @@ class Orchestrator:
                     generated += 1
 
                     logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                        f"[GENERATED] {topic} | priority={priority}"
                     )
 
                 except Exception as e:
