@@ -21,16 +21,20 @@ LAST_DATA = []
 duplicate_cache = {}
 
 
+# -------------------------
+# DUPLICATE CONTROL (FIXED)
+# -------------------------
 def is_duplicate(topic):
     try:
-        time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
+        # 🔥 daha kısa window (2 dk)
+        time_bucket = int(time.time() / 120)
+        h = hashlib.md5((str(topic[:50]).lower() + str(time_bucket)).encode()).hexdigest()
     except:
         return False
 
     now = time.time()
 
-    if h in duplicate_cache and now - duplicate_cache[h] < 300:
+    if h in duplicate_cache and now - duplicate_cache[h] < 120:
         return True
 
     duplicate_cache[h] = now
@@ -66,15 +70,15 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
             print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
+            crisis_map = []
             for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+                title = str(c.get("title", "")).lower()
+                crisis_map.append((title, c))
 
             # -------------------------
             # 3. SIGNALS
@@ -83,7 +87,7 @@ class Orchestrator:
 
             if not signals:
                 signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
+                    {"topic": str(x.get("title") or "fallback"), "score": 0.5}
                     for x in raw[:5]
                 ]
 
@@ -102,19 +106,23 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS ENRICHMENT
             # -------------------------
             for s in signals:
 
-                topic = str(s.get("topic", "")).lower()
+                topic = str(s.get("topic") or "").lower()
 
-                if topic in crisis_map:
-                    crisis = crisis_map[topic]
+                for title, crisis in crisis_map:
 
-                    s["urgency"] = crisis.get("urgency", "high")
+                    if topic and (topic in title or title in topic):
 
-                    # 🔥 priority boost
-                    s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
+                        s["urgency"] = crisis.get("urgency", "high")
+
+                        # 🔥 kontrollü boost
+                        s["score"] = min(s.get("score", 0.4) + 0.2, 1.0)
+
+                        s["crisis"] = True
+                        break
 
             # -------------------------
             # 7. DECISION
@@ -134,15 +142,16 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
+            # decision attach
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
 
             # -------------------------
-            # 9. GENERATION
+            # 9. GENERATION (FIXED)
             # -------------------------
             generated = 0
+            MIN_GENERATE = 2   # 🔥 en az üretim garantisi
 
             for item in intel_items:
 
@@ -152,13 +161,16 @@ class Orchestrator:
                     if not topic:
                         continue
 
+                    # 🔥 duplicate soften
                     if is_duplicate(topic):
-                        continue
+                        if generated > 0:
+                            continue
 
                     decision = item.get("decision")
                     publish = True if not decision else decision.get("publish", False)
 
-                    if not publish:
+                    # 🔥 minimum içerik zorla
+                    if not publish and generated >= MIN_GENERATE:
                         print("SKIPPED:", topic)
                         continue
 
@@ -166,6 +178,17 @@ class Orchestrator:
 
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
+
+                    source = item.get("source") or "Public Data"
+
+                    content = f"""
+{content}
+
+---
+
+Source: {source}
+Disclaimer: This content is AI-generated analysis based on public data.
+"""
 
                     print("GENERATING:", title)
 
