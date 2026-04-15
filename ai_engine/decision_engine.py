@@ -15,11 +15,13 @@ class DecisionEngine:
         for item in items:
 
             try:
-                signal = item.get("signal", {})
-                prediction = item.get("prediction", {})
-                reasoning = item.get("reasoning", {})
+                # 🔥 SAFE EXTRACTION (pipeline uyumsuzluk fix)
+                signal = item.get("signal") or item
+                prediction = item.get("prediction") or {}
+                reasoning = item.get("reasoning") or {}
 
-                score = signal.get("score", 0)
+                # 🔥 score fallback (çok kritik)
+                score = signal.get("score", item.get("score", 0.3))
                 impact = prediction.get("impact_score", 0.5)
 
                 if isinstance(reasoning, dict):
@@ -27,7 +29,7 @@ class DecisionEngine:
                 else:
                     confidence = 0.5
 
-                urgency = item.get("urgency", "low")
+                urgency = item.get("urgency") or signal.get("urgency") or "low"
 
                 urgency_map = {
                     "low": 0.3,
@@ -37,7 +39,9 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
+                # -------------------------
                 # 🔥 FINAL PRIORITY
+                # -------------------------
                 priority = (
                     (score * 0.30) +
                     (impact * 0.25) +
@@ -45,8 +49,10 @@ class DecisionEngine:
                     (urgency_score * 0.20)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
+                # -------------------------
+                # 🔥 HARD FILTER (yumuşak)
+                # -------------------------
+                if score < 0.1 and impact < 0.2:
                     continue
 
                 scored.append({
@@ -60,7 +66,7 @@ class DecisionEngine:
                     }
                 })
 
-            except:
+            except Exception:
                 continue
 
         if not scored:
@@ -88,7 +94,7 @@ class DecisionEngine:
             if s["priority"] < MIN_THRESHOLD:
                 continue
 
-            topic = str(s["item"].get("topic", "")).lower()
+            topic = str(s["item"].get("topic") or s["item"].get("title") or "").lower()
 
             if topic in used_topics:
                 continue
@@ -96,7 +102,7 @@ class DecisionEngine:
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
+        # 🔥 fallback → sistem ölmez
         if not selected and scored:
             selected = [scored[0]]
 
