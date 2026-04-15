@@ -66,15 +66,16 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
             print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
+            # 🔥 daha esnek map (substring match için)
+            crisis_map = []
             for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+                title = str(c.get("title", "")).lower()
+                crisis_map.append((title, c))
 
             # -------------------------
             # 3. SIGNALS
@@ -83,7 +84,7 @@ class Orchestrator:
 
             if not signals:
                 signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
+                    {"topic": str(x.get("title") or "fallback"), "score": 0.5}
                     for x in raw[:5]
                 ]
 
@@ -102,19 +103,24 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS ENRICHMENT (FIXED)
             # -------------------------
             for s in signals:
 
-                topic = str(s.get("topic", "")).lower()
+                topic = str(s.get("topic") or "").lower()
 
-                if topic in crisis_map:
-                    crisis = crisis_map[topic]
+                for title, crisis in crisis_map:
 
-                    s["urgency"] = crisis.get("urgency", "high")
+                    # 🔥 substring match (KRİTİK FIX)
+                    if topic and (topic in title or title in topic):
 
-                    # 🔥 priority boost
-                    s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
+                        s["urgency"] = crisis.get("urgency", "high")
+
+                        # 🔥 kontrollü boost (patlatmaz)
+                        s["score"] = min(s.get("score", 0.4) + 0.2, 1.0)
+
+                        s["crisis"] = True
+                        break
 
             # -------------------------
             # 7. DECISION
@@ -134,7 +140,7 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
+            # 🔥 decision attach FIX
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
@@ -166,6 +172,18 @@ class Orchestrator:
 
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
+
+                    # 🔥 legal safe
+                    source = item.get("source") or "Public Data"
+
+                    content = f"""
+{content}
+
+---
+
+Source: {source}
+Disclaimer: This content is AI-generated analysis based on public data.
+"""
 
                     print("GENERATING:", title)
 
