@@ -20,21 +20,35 @@ from backend.storage import save_post
 LAST_DATA = []
 duplicate_cache = {}
 
+DUPLICATE_WINDOW = 300
+MAX_GENERATIONS_PER_CYCLE = 5
 
-def is_duplicate(topic):
+
+def cleanup_duplicate_cache():
+    now = time.time()
+    expired = [
+        key for key, ts in duplicate_cache.items()
+        if now - ts > DUPLICATE_WINDOW
+    ]
+    for key in expired:
+        duplicate_cache.pop(key, None)
+
+
+def is_duplicate(topic, content=""):
     try:
-        time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
-    except:
+        cleanup_duplicate_cache()
+
+        raw = f"{str(topic).lower()}|{str(content).lower()[:400]}"
+        key = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+        if key in duplicate_cache:
+            return True
+
+        duplicate_cache[key] = time.time()
         return False
 
-    now = time.time()
-
-    if h in duplicate_cache and now - duplicate_cache[h] < 300:
-        return True
-
-    duplicate_cache[h] = now
-    return False
+    except Exception:
+        return False
 
 
 class Orchestrator:
@@ -53,7 +67,7 @@ class Orchestrator:
 
         try:
             # -------------------------
-            # 1. DATA
+            # 1. DATA COLLECTION
             # -------------------------
             raw = crawl()
 
@@ -66,25 +80,28 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
             print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
-            # 3. SIGNALS
+            # 3. SIGNAL DETECTION
             # -------------------------
             signals = detect_signals(raw)
 
             if not signals:
                 signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
-                    for x in raw[:5]
+                    {
+                        "topic": str(item.get("title") or "fallback"),
+                        "score": 0.5
+                    }
+                    for item in raw[:10]
                 ]
 
             # -------------------------
@@ -102,31 +119,35 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS BOOST
             # -------------------------
             for s in signals:
-
                 topic = str(s.get("topic", "")).lower()
 
                 if topic in crisis_map:
-                    crisis = crisis_map[topic]
-
-                    s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
-                    s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
+                    s["urgency"] = "high"
+                    s["score"] = min(float(s.get("score", 0.5)) + 0.3, 1.0)
 
             # -------------------------
-            # 7. DECISION
+            # 7. SORT BY SCORE
+            # -------------------------
+            signals = sorted(
+                signals,
+                key=lambda x: float(x.get("score", 0)),
+                reverse=True
+            )
+
+            # -------------------------
+            # 8. DECISION
             # -------------------------
             decisions = self.decision.evaluate(signals)
 
             if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
+                logger.warning("[ORCHESTRATOR] No decisions")
                 return
 
             # -------------------------
-            # 8. INTELLIGENCE
+            # 9. INTELLIGENCE
             # -------------------------
             intel_items = self.intelligence.run(decisions)
 
@@ -134,38 +155,44 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
 
             # -------------------------
-            # 9. GENERATION
+            # 10. GENERATION
             # -------------------------
             generated = 0
 
             for item in intel_items:
 
+                if generated >= MAX_GENERATIONS_PER_CYCLE:
+                    break
+
                 try:
-                    topic = str(item.get("topic") or "").strip()
+                    topic = str(item.get("topic", "")).strip()
 
                     if not topic:
+                        print("EMPTY TOPIC")
                         continue
 
-                    if is_duplicate(topic):
+                    narrative = item.get("narrative") or {}
+                    title = narrative.get("title") or topic[:120]
+                    content = narrative.get("content") or topic
+
+                    if is_duplicate(topic, content):
+                        print("DUPLICATE:", topic)
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    decision = item.get("decision") or {}
+                    publish = decision.get("publish")
+
+                    if publish is None:
+                        publish = True
 
                     if not publish:
                         print("SKIPPED:", topic)
                         continue
-
-                    narrative = item.get("narrative") or {}
-
-                    title = narrative.get("title") or topic[:80]
-                    content = narrative.get("content") or topic
 
                     print("GENERATING:", title)
 
@@ -174,7 +201,8 @@ class Orchestrator:
                     generated += 1
 
                     logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                        f"[GENERATED] {topic} | "
+                        f"priority={decision.get('priority', 'N/A')}"
                     )
 
                 except Exception as e:
@@ -191,4 +219,6 @@ class Orchestrator:
 
         finally:
             duration = round(time.time() - start, 2)
-            logger.info(f"[ORCHESTRATOR] Cycle finished in {duration}s")
+            logger.info(
+                f"[ORCHESTRATOR] Cycle finished in {duration}s"
+            )
