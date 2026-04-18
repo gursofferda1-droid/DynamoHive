@@ -19,13 +19,12 @@ class DecisionEngine:
                 prediction = item.get("prediction", {})
                 reasoning = item.get("reasoning", {})
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+                score = float(signal.get("score", 0) or 0)
+                impact = float(prediction.get("impact_score", 0.5) or 0.5)
 
+                confidence = 0.5
                 if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+                    confidence = float(reasoning.get("confidence", 0.5) or 0.5)
 
                 urgency = item.get("urgency", "low")
 
@@ -37,7 +36,9 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
+                # -------------------------
+                # FINAL PRIORITY
+                # -------------------------
                 priority = (
                     (score * 0.30) +
                     (impact * 0.25) +
@@ -45,8 +46,10 @@ class DecisionEngine:
                     (urgency_score * 0.20)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
+                # -------------------------
+                # SOFT FILTER (FIXED)
+                # -------------------------
+                if score < 0.08 and impact < 0.15:
                     continue
 
                 scored.append({
@@ -69,44 +72,44 @@ class DecisionEngine:
         # -------------------------
         # 2. SORT
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
         # -------------------------
         # 3. SELECTION
         # -------------------------
         TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        MIN_THRESHOLD = 0.12   # 🔥 FIXED (was too strict)
 
         selected = []
         used_topics = set()
 
-        for s in scored:
+        for i, s in enumerate(scored):
 
             if len(selected) >= TOP_K:
                 break
-
-            if s["priority"] < MIN_THRESHOLD:
-                continue
 
             topic = str(s["item"].get("topic", "")).lower()
 
             if topic in used_topics:
                 continue
 
-            used_topics.add(topic)
-            selected.append(s)
-
-        # fallback → en az 1 içerik
-        if not selected and scored:
-            selected = [scored[0]]
+            # 🔥 threshold relaxed
+            if s["priority"] >= MIN_THRESHOLD:
+                selected.append(s)
+                used_topics.add(topic)
 
         # -------------------------
-        # 4. ATTACH DECISION
+        # 4. HARD FALLBACK (GUARANTEED OUTPUT)
+        # -------------------------
+        if not selected and scored:
+            selected = scored[:2]   # 🔥 always produce something
+
+        # -------------------------
+        # 5. ATTACH DECISION
         # -------------------------
         for idx, s in enumerate(scored):
 
             item = s["item"]
-
             publish = s in selected
 
             item["decision"] = {
