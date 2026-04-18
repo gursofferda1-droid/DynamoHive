@@ -2,15 +2,13 @@ class DecisionEngine:
 
     def evaluate(self, items):
 
-        output = []
-
         if not isinstance(items, list) or not items:
-            return output
+            return []
 
         scored = []
 
         # -------------------------
-        # 1. SCORING
+        # 1. SCORING (soft system)
         # -------------------------
         for item in items:
 
@@ -19,35 +17,20 @@ class DecisionEngine:
                 prediction = item.get("prediction", {})
                 reasoning = item.get("reasoning", {})
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+                score = float(signal.get("score", 0.3))
+                impact = float(prediction.get("impact_score", 0.4))
+                confidence = float(reasoning.get("confidence", 0.5)) if isinstance(reasoning, dict) else 0.5
 
-                if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+                urgency_map = {"low": 0.2, "medium": 0.5, "high": 0.8}
+                urgency = urgency_map.get(item.get("urgency", "medium"), 0.5)
 
-                urgency = item.get("urgency", "low")
-
-                urgency_map = {
-                    "low": 0.3,
-                    "medium": 0.6,
-                    "high": 0.9
-                }
-
-                urgency_score = urgency_map.get(urgency, 0.3)
-
-                # 🔥 FINAL PRIORITY
+                # soft composite score
                 priority = (
-                    (score * 0.30) +
-                    (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
+                    score * 0.35 +
+                    impact * 0.30 +
+                    confidence * 0.20 +
+                    urgency * 0.15
                 )
-
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
-                    continue
 
                 scored.append({
                     "item": item,
@@ -56,7 +39,7 @@ class DecisionEngine:
                         "score": score,
                         "impact": impact,
                         "confidence": confidence,
-                        "urgency": urgency
+                        "urgency": item.get("urgency", "medium")
                     }
                 })
 
@@ -69,44 +52,49 @@ class DecisionEngine:
         # -------------------------
         # 2. SORT
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
         # -------------------------
-        # 3. SELECTION
+        # 3. SELECTION (guaranteed output)
         # -------------------------
         TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        MIN_SOFT = 0.15
 
         selected = []
-        used_topics = set()
+        seen_topics = set()
 
         for s in scored:
+
+            topic = str(s["item"].get("topic", "")).lower()
+
+            if topic in seen_topics:
+                continue
+
+            seen_topics.add(topic)
+
+            # soft filter (NOT hard block)
+            if s["priority"] < MIN_SOFT and len(selected) > 0:
+                continue
+
+            selected.append(s)
 
             if len(selected) >= TOP_K:
                 break
 
-            if s["priority"] < MIN_THRESHOLD:
-                continue
-
-            topic = str(s["item"].get("topic", "")).lower()
-
-            if topic in used_topics:
-                continue
-
-            used_topics.add(topic)
-            selected.append(s)
-
-        # fallback → en az 1 içerik
-        if not selected and scored:
+        # -------------------------
+        # 4. FALLBACK GUARANTEE (CRITICAL FIX)
+        # -------------------------
+        if not selected:
             selected = [scored[0]]
 
         # -------------------------
-        # 4. ATTACH DECISION
+        # 5. DECISION ATTACHMENT
         # -------------------------
+        output = []
+
         for idx, s in enumerate(scored):
 
             item = s["item"]
-
             publish = s in selected
 
             item["decision"] = {
