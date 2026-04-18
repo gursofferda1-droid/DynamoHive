@@ -1,92 +1,51 @@
 import sqlite3
-import os
-import time
+import hashlib
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_DIR = os.path.join(BASE_DIR, "database")
-DB_PATH = os.path.join(DB_DIR, "dynamohive.db")
+DB_PATH = "dynamohive.db"
 
 
-def init_db():
+def get_connection():
+    return sqlite3.connect(DB_PATH)
 
-    if not os.path.exists(DB_DIR):
-        os.makedirs(DB_DIR)
 
-    conn = sqlite3.connect(DB_PATH)
+def build_post_hash(title, content):
+    raw = f"{title}|{content[:300]}"
+    return hashlib.md5(raw.lower().strip().encode()).hexdigest()
+
+
+def save_post(title, content):
+    if not title:
+        return False
+
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
+            title TEXT NOT NULL,
             content TEXT,
+            post_hash TEXT UNIQUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    conn.commit()
-    conn.close()
-
-
-def get_connection():
-    init_db()
-    return sqlite3.connect(DB_PATH)
-
-
-def save_post(title, content):
+    post_hash = build_post_hash(title, content or "")
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
         cursor.execute("""
-            INSERT INTO posts (title, content)
-            VALUES (?, ?)
-        """, (title, content))
+            INSERT INTO posts (title, content, post_hash)
+            VALUES (?, ?, ?)
+        """, (title, content, post_hash))
 
         conn.commit()
         conn.close()
+        return True
 
-    except Exception as e:
-        print("DB write error:", e)
-
-
-def get_posts():
-
-    try:
-        conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT id, title, content, created_at
-            FROM posts
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
-
-        rows = cursor.fetchall()
+    except sqlite3.IntegrityError:
         conn.close()
+        return False
 
-        posts = []
-
-        for row in rows:
-            post = dict(row)
-
-            try:
-                post["timestamp"] = time.mktime(
-                    time.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S")
-                )
-            except:
-                post["timestamp"] = time.time()
-
-            post["keywords"] = []
-            post["source"] = "internal"
-
-            posts.append(post)
-
-        return posts
-
-    except Exception as e:
-        print("DB read error:", e)
-        return []
+    except Exception:
+        conn.close()
+        return False
