@@ -1,9 +1,9 @@
+from backend.logger import logger
+
+
 def generate_narrative(intel):
 
     try:
-        # -------------------------
-        # SAFE INPUTS
-        # -------------------------
         if not isinstance(intel, dict):
             intel = {}
 
@@ -15,69 +15,74 @@ def generate_narrative(intel):
             actors = []
 
         region = str(intel.get("region") or "global")
-
         urgency = str(intel.get("urgency") or "low").lower()
+
+        decision = intel.get("decision", {})
+        priority = decision.get("priority", 0)
+
         if urgency not in ["low", "medium", "high"]:
             urgency = "low"
 
-        # -------------------------
-        # WHAT
-        # -------------------------
         what = topic if topic else "Unknown signal"
+
+        # -------------------------
+        # CATEGORY
+        # -------------------------
+        if any(k in insight for k in ["geopolitical", "conflict", "war"]):
+            category = "geopolitical"
+
+        elif any(k in insight for k in ["ai", "technology", "technological"]):
+            category = "technology"
+
+        elif any(k in insight for k in ["economic", "finance", "market"]):
+            category = "economic"
+
+        elif any(k in insight for k in ["social", "society", "protest"]):
+            category = "social"
+
+        else:
+            category = "general"
 
         # -------------------------
         # WHY
         # -------------------------
-        if "geopolitical" in insight:
-            why = "This reflects rising geopolitical tension and strategic positioning."
+        why_map = {
+            "geopolitical": "This reflects shifting geopolitical pressure and strategic positioning.",
+            "technology": "This signals acceleration in technological competition and capability shifts.",
+            "economic": "This indicates movement in economic influence or capital flows.",
+            "social": "This reflects deeper social instability or public pressure.",
+            "general": "This is an emerging signal gaining structural relevance."
+        }
 
-        elif "ai" in insight or "technological" in insight:
-            why = "This signals acceleration in technological competition and capability shifts."
-
-        elif "economic" in insight:
-            why = "This indicates movement in economic power or capital flows."
-
-        elif "social" in insight:
-            why = "This reflects underlying social instability or pressure."
-
-        else:
-            why = "This is an emerging signal gaining structural relevance."
+        why = why_map.get(category)
 
         # -------------------------
         # IMPACT
         # -------------------------
-        if urgency == "high":
-            impact = "High probability of escalation or broader systemic effects."
+        if urgency == "high" or priority >= 0.7:
+            impact = "High probability of escalation or broader systemic consequences."
 
-        elif urgency == "medium":
+        elif urgency == "medium" or priority >= 0.4:
             impact = "Likely to influence regional or sector-level dynamics."
 
         else:
-            impact = "Currently limited, but worth monitoring."
+            impact = "Currently limited, but worth monitoring for further change."
 
         # -------------------------
         # NEXT
         # -------------------------
-        if "geopolitical" in insight:
-            nxt = "Watch for escalation, alliances, or counter-actions."
+        next_map = {
+            "geopolitical": "Watch for escalation, alliances, sanctions, or counter-actions.",
+            "technology": "Expect rapid iteration, competitive response, and regulatory pressure.",
+            "economic": "Monitor capital movement, pricing shifts, and institutional reactions.",
+            "social": "Track sentiment shifts, mobilization patterns, and policy response.",
+            "general": "Track signal frequency and cross-domain spread."
+        }
 
-        elif "ai" in insight:
-            nxt = "Expect rapid iteration, competition, and regulatory response."
+        nxt = next_map.get(category)
 
-        elif "economic" in insight:
-            nxt = "Monitor capital movement and institutional response."
+        title = topic[:120] if topic else "Signal"
 
-        else:
-            nxt = "Track signal frequency and cross-domain spread."
-
-        # -------------------------
-        # TITLE SAFE
-        # -------------------------
-        title = (topic[:80] if topic else "Signal")
-
-        # -------------------------
-        # CONTENT SAFE
-        # -------------------------
         content = (
             f"{what}\n\n"
             f"Why it matters:\n{why}\n\n"
@@ -85,34 +90,31 @@ def generate_narrative(intel):
             f"What to watch:\n{nxt}"
         )
 
-        # -------------------------
-        # FINAL OUTPUT
-        # -------------------------
         return {
             "title": title,
             "content": content,
             "meta": {
                 "actors": actors,
                 "region": region,
-                "urgency": urgency
+                "urgency": urgency,
+                "category": category,
+                "priority": priority
             }
         }
 
-    except Exception:
-        # -------------------------
-        # HARD FAIL SAFE
-        # -------------------------
-        try:
-            topic = str(intel.get("topic") or "fallback")
-        except:
-            topic = "fallback"
+    except Exception as e:
+        logger.warning(f"[NARRATIVE ERROR] {e}")
+
+        topic = str(intel.get("topic") or "fallback")
 
         return {
-            "title": topic[:80] if topic else "fallback",
-            "content": topic if topic else "fallback content",
+            "title": topic[:120],
+            "content": topic,
             "meta": {
                 "actors": [],
                 "region": "global",
-                "urgency": "low"
+                "urgency": "low",
+                "category": "general",
+                "priority": 0
             }
         }
