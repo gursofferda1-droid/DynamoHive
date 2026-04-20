@@ -1,7 +1,9 @@
+from backend.logger import logger
+
+
 class DecisionEngine:
 
     def evaluate(self, items):
-
         output = []
 
         if not isinstance(items, list) or not items:
@@ -13,21 +15,19 @@ class DecisionEngine:
         # 1. SCORING
         # -------------------------
         for item in items:
-
             try:
                 signal = item.get("signal", {})
                 prediction = item.get("prediction", {})
                 reasoning = item.get("reasoning", {})
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+                score = float(signal.get("score", 0))
+                impact = float(prediction.get("impact_score", 0.5))
 
+                confidence = 0.5
                 if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+                    confidence = float(reasoning.get("confidence", 0.5))
 
-                urgency = item.get("urgency", "low")
+                urgency = str(item.get("urgency", "low")).lower()
 
                 urgency_map = {
                     "low": 0.3,
@@ -37,34 +37,40 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
                 priority = (
                     (score * 0.30) +
                     (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
+                    (confidence * 0.20) +
+                    (urgency_score * 0.25)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
+                # hard filter
                 if score < 0.15 and impact < 0.25:
+                    item["decision"] = {
+                        "publish": False,
+                        "priority": round(priority, 3),
+                        "reason": "low_signal"
+                    }
+                    output.append(item)
                     continue
 
                 scored.append({
                     "item": item,
                     "priority": priority,
                     "meta": {
-                        "score": score,
-                        "impact": impact,
-                        "confidence": confidence,
+                        "score": round(score, 3),
+                        "impact": round(impact, 3),
+                        "confidence": round(confidence, 3),
                         "urgency": urgency
                     }
                 })
 
-            except:
+            except Exception as e:
+                logger.warning(f"[DECISION ERROR] {e}")
                 continue
 
         if not scored:
-            return []
+            return output
 
         # -------------------------
         # 2. SORT
@@ -77,45 +83,48 @@ class DecisionEngine:
         TOP_K = 5
         MIN_THRESHOLD = 0.25
 
-        selected = []
-        used_topics = set()
+        selected_topics = set()
 
-        for s in scored:
+        for idx, s in enumerate(scored):
+            item = s["item"]
+            topic = str(item.get("topic", "")).strip().lower()
 
-            if len(selected) >= TOP_K:
-                break
+            publish = False
+            reason = "below_threshold"
 
             if s["priority"] < MIN_THRESHOLD:
-                continue
+                reason = "below_threshold"
 
-            topic = str(s["item"].get("topic", "")).lower()
+            elif topic in selected_topics:
+                reason = "duplicate_topic"
 
-            if topic in used_topics:
-                continue
+            elif len(selected_topics) >= TOP_K:
+                reason = "top_k_limit"
 
-            used_topics.add(topic)
-            selected.append(s)
-
-        # fallback → en az 1 içerik
-        if not selected and scored:
-            selected = [scored[0]]
-
-        # -------------------------
-        # 4. ATTACH DECISION
-        # -------------------------
-        for idx, s in enumerate(scored):
-
-            item = s["item"]
-
-            publish = s in selected
+            else:
+                publish = True
+                reason = "selected"
+                selected_topics.add(topic)
 
             item["decision"] = {
                 "publish": publish,
                 "priority": round(s["priority"], 3),
                 "rank": idx + 1,
+                "reason": reason,
                 **s["meta"]
             }
 
             output.append(item)
+
+        # fallback → en az 1 içerik
+        if not any(x.get("decision", {}).get("publish") for x in output):
+            best = output[0]
+            best["decision"]["publish"] = True
+            best["decision"]["reason"] = "fallback_selected"
+
+        logger.info(
+            f"[DECISION] total={len(items)} scored={len(scored)} "
+            f"published={sum(1 for x in output if x.get('decision', {}).get('publish'))}"
+        )
 
         return output
