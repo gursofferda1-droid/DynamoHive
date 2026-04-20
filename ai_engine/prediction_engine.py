@@ -1,45 +1,63 @@
-import math
 import time
+
+from backend.logger import logger
 
 
 def predict_trend(intel):
 
     topic = str(intel.get("topic", "")).lower()
-    score = float(intel.get("score", 1.0))
-    insight = str(intel.get("insight", ""))
+    score = float(intel.get("score", 0.5))
+    insight = str(intel.get("insight", "")).lower()
 
     trend = "neutral"
     risk = "low"
     horizon = "short-term"
 
-    if score > 3:
-        trend = "rising"
-    if score > 6:
+    # -------------------------
+    # TREND
+    # -------------------------
+    if score >= 0.75:
         trend = "explosive"
+    elif score >= 0.45:
+        trend = "rising"
+    elif score >= 0.25:
+        trend = "emerging"
 
-    if any(x in topic for x in ["war", "attack", "missile", "conflict"]):
+    # -------------------------
+    # TOPIC ANALYSIS
+    # -------------------------
+    if any(x in topic for x in ["war", "attack", "missile", "conflict", "strike"]):
         risk = "high"
         horizon = "immediate"
 
-    elif any(x in topic for x in ["collapse", "crisis", "default"]):
+    elif any(x in topic for x in ["collapse", "crisis", "default", "recession"]):
         risk = "medium"
         horizon = "mid-term"
 
-    elif any(x in topic for x in ["ai", "ipo", "billion", "expansion"]):
+    elif any(x in topic for x in ["ai", "ipo", "expansion", "chip", "startup"]):
         trend = "growth"
         horizon = "mid-term"
 
-    if "geopolitical" in insight:
+    # -------------------------
+    # INSIGHT BOOST
+    # -------------------------
+    if any(x in insight for x in ["geopolitical", "power shift", "escalation"]):
         risk = "high"
 
-    if "ai power shift" in insight:
-        trend = "strategic"
+    if any(x in insight for x in ["technology", "ai", "automation"]):
+        if trend == "neutral":
+            trend = "strategic"
+
+    # -------------------------
+    # CONFIDENCE
+    # -------------------------
+    confidence = max(0.1, min(score, 1.0))
 
     return {
         "trend": trend,
         "risk": risk,
         "horizon": horizon,
-        "confidence": round(math.log1p(score), 2),
+        "confidence": round(confidence, 2),
         "timestamp": int(time.time())
     }
 
@@ -49,12 +67,11 @@ class PredictionEngine:
     def forecast(self, signal, context):
 
         try:
-            # 🔥 DOĞRU ŞEKİL (dict içinde assignment YOK)
             topic = signal.get("topic") or signal.get("title") or ""
 
             intel = {
                 "topic": topic,
-                "score": signal.get("score", 1.0),
+                "score": signal.get("score", 0.5),
                 "insight": context.get("insight", "")
             }
 
@@ -63,6 +80,7 @@ class PredictionEngine:
             result["impact_score"] = result.get("confidence", 0.5)
 
             risk = result.get("risk", "low")
+
             urgency_map = {
                 "low": "low",
                 "medium": "medium",
@@ -74,7 +92,7 @@ class PredictionEngine:
             return result
 
         except Exception as e:
-            print("PREDICTION ERROR:", e)
+            logger.warning(f"[PREDICTION ERROR] {e}")
 
             return {
                 "trend": "neutral",
