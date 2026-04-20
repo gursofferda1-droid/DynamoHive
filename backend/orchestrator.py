@@ -21,20 +21,31 @@ LAST_DATA = []
 duplicate_cache = {}
 
 
-def is_duplicate(topic):
+def is_duplicate(topic, ttl=3600):
     try:
-        time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
-    except:
+        h = hashlib.md5(str(topic).strip().lower().encode()).hexdigest()
+    except Exception:
         return False
 
     now = time.time()
 
-    if h in duplicate_cache and now - duplicate_cache[h] < 300:
-        return True
+    if h in duplicate_cache:
+        if now - duplicate_cache[h] < ttl:
+            return True
 
     duplicate_cache[h] = now
     return False
+
+
+def cleanup_duplicate_cache(max_age=86400):
+    now = time.time()
+    stale_keys = [
+        k for k, v in duplicate_cache.items()
+        if now - v > max_age
+    ]
+
+    for k in stale_keys:
+        duplicate_cache.pop(k, None)
 
 
 class Orchestrator:
@@ -66,15 +77,15 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
-            print("CRISIS SIGNALS:", len(crisis_signals))
+            logger.info(f"[CRISIS] signals={len(crisis_signals)}")
 
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
             # 3. SIGNALS
@@ -102,18 +113,15 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS ENRICHMENT
             # -------------------------
             for s in signals:
-
                 topic = str(s.get("topic", "")).lower()
 
                 if topic in crisis_map:
                     crisis = crisis_map[topic]
 
                     s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
             # -------------------------
@@ -122,22 +130,37 @@ class Orchestrator:
             decisions = self.decision.evaluate(signals)
 
             if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
+                logger.warning("[ORCHESTRATOR] No decision output")
+                return
+
+            # publish edilecekleri ayır
+            publish_items = [
+                x for x in decisions
+                if x.get("decision", {}).get("publish")
+            ]
+
+            if not publish_items:
+                logger.warning("[ORCHESTRATOR] Nothing passed publish filter")
                 return
 
             # -------------------------
             # 8. INTELLIGENCE
             # -------------------------
-            intel_items = self.intelligence.run(decisions)
+            intel_items = self.intelligence.run(publish_items)
 
             if not intel_items:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
-            for i, item in enumerate(intel_items):
-                if i < len(decisions):
-                    item["decision"] = decisions[i].get("decision", {})
+            # güvenli topic mapping
+            decision_map = {
+                str(x.get("topic", "")).lower(): x.get("decision", {})
+                for x in publish_items
+            }
+
+            for item in intel_items:
+                key = str(item.get("topic", "")).lower()
+                item["decision"] = decision_map.get(key, {})
 
             # -------------------------
             # 9. GENERATION
@@ -145,7 +168,6 @@ class Orchestrator:
             generated = 0
 
             for item in intel_items:
-
                 try:
                     topic = str(item.get("topic") or "").strip()
 
@@ -153,13 +175,16 @@ class Orchestrator:
                         continue
 
                     if is_duplicate(topic):
+                        logger.info(f"[SKIPPED] {topic} | reason=duplicate_cache")
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    decision = item.get("decision", {})
+                    publish = decision.get("publish", False)
 
                     if not publish:
-                        print("SKIPPED:", topic)
+                        logger.info(
+                            f"[SKIPPED] {topic} | reason={decision.get('reason','unknown')}"
+                        )
                         continue
 
                     narrative = item.get("narrative") or {}
@@ -167,26 +192,35 @@ class Orchestrator:
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
 
-                    print("GENERATING:", title)
-
                     save_post(title, content)
 
                     generated += 1
 
                     logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                        f"[GENERATED] {topic} | "
+                        f"priority={decision.get('priority','N/A')}"
                     )
 
                 except Exception as e:
-                    print("GEN ERROR:", e)
+                    logger.warning(f"[GENERATION ERROR] {e}")
                     continue
 
-            print("GENERATED COUNT:", generated)
+            cleanup_duplicate_cache()
+
+            logger.info(
+                f"[FLOW] raw={len(raw)} "
+                f"signals={len(signals)} "
+                f"decisions={len(decisions)} "
+                f"publish={len(publish_items)} "
+                f"intel={len(intel_items)} "
+                f"generated={generated}"
+            )
 
             if generated == 0:
                 logger.warning("[ORCHESTRATOR] NOTHING GENERATED")
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"[ORCHESTRATOR ERROR] {e}")
             traceback.print_exc()
 
         finally:
