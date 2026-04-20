@@ -1,15 +1,29 @@
-import hashlib
-from collections import defaultdict
+import re
+
+from backend.logger import logger
 
 
 def normalize(text):
-    return text.lower().strip()
+    try:
+        text = str(text).lower()
+        text = re.sub(r"[^\w\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+    except Exception:
+        return ""
 
 
 def simple_similarity(a, b):
-    a_words = set(a.split())
-    b_words = set(b.split())
-    return len(a_words & b_words) / max(len(a_words), 1)
+    try:
+        a_words = set(a.split())
+        b_words = set(b.split())
+
+        if not a_words or not b_words:
+            return 0
+
+        return len(a_words & b_words) / max(len(a_words), len(b_words))
+    except Exception:
+        return 0
 
 
 def group_similar(signals, threshold=0.5):
@@ -23,16 +37,17 @@ def group_similar(signals, threshold=0.5):
         cluster = [s1]
         used.add(i)
 
+        t1 = normalize(s1.get("topic") or s1.get("title") or "")
+
         for j, s2 in enumerate(signals):
             if j in used:
                 continue
 
-            sim = simple_similarity(
-                normalize(s1.get("title", "")),
-                normalize(s2.get("title", ""))
-            )
+            t2 = normalize(s2.get("topic") or s2.get("title") or "")
 
-            if sim > threshold:
+            sim = simple_similarity(t1, t2)
+
+            if sim >= threshold:
                 cluster.append(s2)
                 used.add(j)
 
@@ -42,22 +57,43 @@ def group_similar(signals, threshold=0.5):
 
 
 def merge_cluster(cluster):
-    # en yüksek score olanı seç
     best = max(cluster, key=lambda x: x.get("score", 0))
 
-    merged = {
-        "title": best.get("title"),
-        "content": best.get("content"),
-        "score": best.get("score", 0),
-        "sources": [s.get("source") for s in cluster],
-        "cluster_size": len(cluster)
-    }
+    avg_score = sum(
+        float(x.get("score", 0.5)) for x in cluster
+    ) / max(len(cluster), 1)
 
-    return merged
+    boosted_score = min(avg_score + (len(cluster) * 0.03), 1.0)
+
+    return {
+        "topic": best.get("topic") or best.get("title"),
+        "title": best.get("title") or best.get("topic"),
+        "content": best.get("content", ""),
+        "score": round(boosted_score, 3),
+        "count": sum(x.get("count", 1) for x in cluster),
+        "cluster_size": len(cluster),
+        "category": best.get("category", "general"),
+        "sources": [x.get("source") for x in cluster if x.get("source")]
+    }
 
 
 def cluster_signals(signals):
-    grouped = group_similar(signals)
-    merged = [merge_cluster(c) for c in grouped]
+    try:
+        if not isinstance(signals, list) or not signals:
+            return []
 
-    return merged
+        grouped = group_similar(signals)
+        merged = [merge_cluster(c) for c in grouped]
+
+        merged.sort(
+            key=lambda x: x.get("score", 0),
+            reverse=True
+        )
+
+        logger.info(f"[CLUSTER] clusters={len(merged)}")
+
+        return merged
+
+    except Exception as e:
+        logger.warning(f"[CLUSTER ERROR] {e}")
+        return signals if isinstance(signals, list) else []
