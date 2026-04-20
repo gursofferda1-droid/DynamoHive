@@ -1,6 +1,8 @@
 from collections import defaultdict
 import re
 
+from backend.logger import logger
+
 
 def normalize(text):
     try:
@@ -8,42 +10,62 @@ def normalize(text):
         text = re.sub(r"[^\w\s]", " ", text)
         text = re.sub(r"\s+", " ", text)
         return text.strip()
-    except:
+    except Exception:
         return ""
 
 
+def classify_topic(text):
+    t = text.lower()
+
+    if any(x in t for x in ["war", "attack", "missile", "conflict", "sanction"]):
+        return "geopolitical"
+
+    if any(x in t for x in ["ai", "chip", "robot", "automation", "openai"]):
+        return "technology"
+
+    if any(x in t for x in ["market", "economy", "ipo", "inflation", "recession"]):
+        return "economic"
+
+    if any(x in t for x in ["protest", "migration", "society", "election"]):
+        return "social"
+
+    return "general"
+
+
 def compute_score(text, count):
-
     try:
-        t = str(text).lower()
-        score = float(count) * 2
+        t = text.lower()
 
-        strong = [
+        base = min(0.3 + (count * 0.1), 0.6)
+        bonus = 0.0
+
+        strong_terms = [
             "war", "attack", "crisis", "collapse",
-            "ai", "nuclear", "sanction", "conflict"
+            "ai", "nuclear", "conflict", "sanction"
         ]
 
-        if any(w in t for w in strong):
-            score += 3
+        if any(w in t for w in strong_terms):
+            bonus += 0.25
 
-        return score
+        score = min(base + bonus, 1.0)
 
-    except:
-        return float(count or 1)
+        return round(score, 3)
+
+    except Exception:
+        return 0.5
 
 
 def detect_signals(analysis):
 
     try:
         if not isinstance(analysis, list) or not analysis:
-            print("signals detected: 0")
+            logger.info("[SIGNALS] detected=0")
             return []
 
-        counter = defaultdict(int)
-        seen = set()
+        grouped = defaultdict(int)
+        originals = {}
 
         for item in analysis:
-
             try:
                 if not isinstance(item, dict):
                     continue
@@ -54,82 +76,74 @@ def detect_signals(analysis):
                 if not raw:
                     continue
 
-                text = normalize(raw)
+                normalized = normalize(raw)
 
-                if not text or text in seen:
+                if not normalized:
                     continue
 
-                seen.add(text)
+                key = " ".join(normalized.split()[:6])
 
-                topic = raw[:120]
-                counter[topic] += 1
+                grouped[key] += 1
 
-            except:
+                if key not in originals:
+                    originals[key] = raw[:120]
+
+            except Exception:
                 continue
 
         signals = []
 
-        for topic, count in counter.items():
+        for key, count in grouped.items():
+            topic = originals.get(key, key)
 
-            try:
-                if not topic:
+            score = compute_score(topic, count)
+            category = classify_topic(topic)
+
+            signals.append({
+                "topic": topic,
+                "title": topic,
+                "score": score,
+                "count": count,
+                "category": category
+            })
+
+        if not signals:
+            for item in analysis[:5]:
+                raw = str(item.get("title") or item.get("text") or "").strip()
+
+                if not raw:
                     continue
-
-                score = compute_score(topic, count)
 
                 signals.append({
-                    "topic": topic,
-                    "title": topic,   # 🔥 EKLENDİ (GLOBAL UYUMLULUK)
-                    "score": score,
-                    "count": count
+                    "topic": raw[:120],
+                    "title": raw[:120],
+                    "score": 0.5,
+                    "count": 1,
+                    "category": "general"
                 })
 
-            except:
-                continue
-
-        # 🔥 HARD FALLBACK (ASLA BOŞ DÖNME)
-        if not signals:
-
-            for item in analysis[:10]:
-
-                try:
-                    raw = item.get("title") or item.get("text") or ""
-
-                    if not raw:
-                        continue
-
-                    raw = str(raw).strip()
-
-                    signals.append({
-                        "topic": raw[:120],
-                        "title": raw[:120],
-                        "score": 1.0,
-                        "count": 1
-                    })
-
-                except:
-                    continue
-
-        # 🔥 SON GARANTİ
         if not signals:
             signals = [{
                 "topic": "fallback signal",
                 "title": "fallback signal",
-                "score": 1.0,
-                "count": 1
+                "score": 0.5,
+                "count": 1,
+                "category": "general"
             }]
 
         signals.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-        print("signals detected:", len(signals))
+        logger.info(f"[SIGNALS] detected={len(signals)}")
 
         return signals
 
-    except:
-        # 🔥 FULL FAILSAFE
+    except Exception as e:
+        logger.warning(f"[SIGNAL DETECTOR ERROR] {e}")
+
         return [{
             "topic": "fallback signal",
             "title": "fallback signal",
-            "score": 1.0,
-            "count": 1
+            "score": 0.5,
+            "count": 1,
+            "category": "general"
         }]
