@@ -38,12 +38,14 @@ class DecisionEngine:
                 urgency_score = urgency_map.get(urgency, 0.3)
 
                 # 🔥 FINAL PRIORITY
-                priority = (
-                    (score * 0.30) +
-                    (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
-                )
+              w = self.learning.weights
+
+priority = (
+    (score * w["score"]) +
+    (impact * w["impact"]) +
+    (confidence * w["confidence"]) +
+    (urgency_score * w["urgency"])
+)
 
                 # 🔥 HARD FILTER (yumuşatılmış)
                 if score < 0.15 and impact < 0.25:
