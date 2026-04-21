@@ -2,50 +2,71 @@
 <html>
 <head>
     <title>DynamoHive GOD MODE</title>
-
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         body {
-            background:#05080F;
-            color:white;
-            font-family:Arial;
-            padding:20px;
+            background: #05080F;
+            color: white;
+            font-family: Arial;
+            padding: 20px;
         }
 
         h1 {
-            color:#00F0FF;
+            color: #00F0FF;
         }
 
         .grid {
-            display:grid;
+            display: grid;
             grid-template-columns: 1fr 1fr;
-            gap:20px;
+            gap: 20px;
+            margin-top: 20px;
         }
 
         .card {
-            background:#111827;
-            padding:20px;
-            border-radius:10px;
+            background: #111827;
+            padding: 20px;
+            border-radius: 10px;
         }
 
         .title {
-            color:#00FF9C;
-            margin-bottom:10px;
+            color: #00FF9C;
+            margin-bottom: 10px;
+            font-weight: bold;
         }
 
         button {
-            padding:10px;
-            margin-top:10px;
-            background:#00F0FF;
-            border:none;
-            cursor:pointer;
+            padding: 10px;
+            margin-top: 10px;
+            background: #00F0FF;
+            border: none;
+            cursor: pointer;
+            width: 100%;
         }
 
         input {
-            padding:8px;
-            width:100%;
-            margin-top:5px;
+            padding: 8px;
+            width: 100%;
+            margin-top: 8px;
+            box-sizing: border-box;
+        }
+
+        .feed-item {
+            border-bottom: 1px solid #222;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+        }
+
+        .priority-high {
+            color: #ff5555;
+        }
+
+        .priority-mid {
+            color: #ffaa00;
+        }
+
+        .priority-low {
+            color: #00F0FF;
         }
     </style>
 </head>
@@ -59,7 +80,6 @@
 </div>
 
 <div class="grid">
-
     <div class="card">
         <div class="title">DOMINANCE</div>
         <canvas id="dominanceChart"></canvas>
@@ -69,11 +89,9 @@
         <div class="title">TREND</div>
         <canvas id="trendChart"></canvas>
     </div>
-
 </div>
 
 <div class="grid">
-
     <div class="card">
         <div class="title">ANOMALIES</div>
         <div id="anomalies"></div>
@@ -83,122 +101,132 @@
         <div class="title">TOP SIGNAL</div>
         <div id="top"></div>
     </div>
-
 </div>
 
 <div class="grid">
-
     <div class="card">
         <div class="title">EVENT INJECTOR</div>
-
         <input id="topic" placeholder="topic (ai / war / etc)">
         <input id="type" placeholder="type (click / like / skip)">
         <button onclick="sendEvent()">SEND EVENT</button>
-
     </div>
 
     <div class="card">
         <div class="title">LIVE FLOW</div>
         <div id="flow"></div>
     </div>
+</div>
 
+<div class="card" style="margin-top:20px;">
+    <div class="title">INTELLIGENCE FEED</div>
+    <div id="intelFeed"></div>
 </div>
 
 <script>
-
 let dominanceChart;
 let trendChart;
 let trendData = [];
 
+function getPriorityClass(priority) {
+    if (priority >= 0.75) return "priority-high";
+    if (priority >= 0.45) return "priority-mid";
+    return "priority-low";
+}
+
 async function load() {
+    try {
+        const res = await fetch("/metrics");
+        const data = await res.json();
+        const o = data.orchestrator || {};
 
-    const res = await fetch("/metrics");
-    const data = await res.json();
-    const o = data.orchestrator || {};
+        document.getElementById("system").innerHTML = `
+            cycles: ${o.cycle_count || 0}<br>
+            signals: ${o.last_signal_count || 0}<br>
+            events: ${o.last_event_count || 0}
+        `;
 
-    // SYSTEM
-    document.getElementById("system").innerHTML = `
-        cycles: ${o.cycle_count || 0}<br>
-        signals: ${o.last_signal_count || 0}<br>
-        events: ${o.last_event_count || 0}
-    `;
+        const labels = (o.dominance || []).map(d => d.topic || "unknown");
+        const values = (o.dominance || []).map(d => d.dominance || 0);
 
-    // DOMINANCE
-    const labels = (o.dominance || []).map(d => d.topic);
-    const values = (o.dominance || []).map(d => d.dominance);
-
-    if (!dominanceChart) {
-        dominanceChart = new Chart(
-            document.getElementById("dominanceChart"),
-            {
+        if (!dominanceChart) {
+            dominanceChart = new Chart(document.getElementById("dominanceChart"), {
                 type: "bar",
                 data: {
-                    labels: labels,
+                    labels,
                     datasets: [{ data: values }]
                 }
-            }
-        );
-    } else {
-        dominanceChart.data.labels = labels;
-        dominanceChart.data.datasets[0].data = values;
-        dominanceChart.update();
-    }
+            });
+        } else {
+            dominanceChart.data.labels = labels;
+            dominanceChart.data.datasets[0].data = values;
+            dominanceChart.update();
+        }
 
-    // TREND
-    trendData.push(o.last_signal_count || 0);
-    if (trendData.length > 20) trendData.shift();
+        trendData.push(o.last_signal_count || 0);
+        if (trendData.length > 20) trendData.shift();
 
-    if (!trendChart) {
-        trendChart = new Chart(
-            document.getElementById("trendChart"),
-            {
+        if (!trendChart) {
+            trendChart = new Chart(document.getElementById("trendChart"), {
                 type: "line",
                 data: {
                     labels: trendData.map((_, i) => i),
                     datasets: [{ data: trendData }]
                 }
-            }
-        );
-    } else {
-        trendChart.data.labels = trendData.map((_, i) => i);
-        trendChart.data.datasets[0].data = trendData;
-        trendChart.update();
+            });
+        } else {
+            trendChart.data.labels = trendData.map((_, i) => i);
+            trendChart.data.datasets[0].data = trendData;
+            trendChart.update();
+        }
+
+        document.getElementById("anomalies").innerHTML =
+            (o.anomalies || []).map(a =>
+                `⚠ ${a.type || "unknown"} → ${a.topic || "unknown"}`
+            ).join("<br>") || "none";
+
+        if (o.dominance && o.dominance.length > 0) {
+            const top = o.dominance[0];
+            document.getElementById("top").innerHTML =
+                `${top.topic || "unknown"} (${top.dominance || 0})`;
+        }
+
+        document.getElementById("flow").innerHTML =
+            (o.dominance || []).map(d =>
+                `→ ${d.topic || "unknown"}`
+            ).join("<br>");
+
+        const postsRes = await fetch("/posts");
+        const postsData = await postsRes.json();
+
+        document.getElementById("intelFeed").innerHTML =
+            (postsData.posts || []).slice(0, 5).map(p => {
+                const priority = Number(p.priority || 0);
+                return `
+                    <div class="feed-item">
+                        <b>${p.title || "Untitled"}</b><br>
+                        <span class="${getPriorityClass(priority)}">
+                            priority: ${priority.toFixed(3)}
+                        </span><br>
+                        source: ${p.source || "internal"}<br>
+                        <small>${(p.content || "").slice(0, 220)}...</small>
+                    </div>
+                `;
+            }).join("") || "No intelligence";
+    } catch (e) {
+        console.error("Dashboard load error:", e);
     }
-
-    // ANOMALIES
-    document.getElementById("anomalies").innerHTML =
-        (o.anomalies || []).map(a =>
-            `⚠ ${a.type} → ${a.topic}`
-        ).join("<br>") || "none";
-
-    // TOP SIGNAL
-    if (o.dominance && o.dominance.length > 0) {
-        const top = o.dominance[0];
-        document.getElementById("top").innerHTML =
-            `${top.topic} (${top.dominance})`;
-    }
-
-    // FLOW
-    document.getElementById("flow").innerHTML =
-        (o.dominance || []).map(d =>
-            `→ ${d.topic}`
-        ).join("<br>");
 }
 
-// EVENT INJECTOR
 async function sendEvent() {
-
     const topic = document.getElementById("topic").value;
     const type = document.getElementById("type").value;
 
     await fetch(`/event?user_id=admin&type=${type}&topic=${topic}`);
-
+    load();
 }
 
-// INIT
-load()
-setInterval(load, 2000);
-
+load();
+setInterval(load, 3000);
 </script>
 
 </body>
