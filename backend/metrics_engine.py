@@ -1,18 +1,9 @@
-# backend/metrics_engine.py
+from fastapi import APIRouter
 
-from backend.events import detect_event_spikes
-from backend.storage import get_posts
+router = APIRouter()
 
-def get_system_metrics():
-
-    posts = get_posts()
-    spikes = detect_event_spikes()
-
-    metrics = {
-        "total_posts": len(posts),
-        "latest_post": posts[0]["title"] if posts else None,
-        "event_spikes": spikes[:5],
-        "status": "running"
+@router.get("/metrics")
+def metrics():
+    return {
+        "orchestrator": orchestrator.state
     }
-
-    return metrics
