@@ -4,6 +4,7 @@ import threading
 import time
 
 from backend.orchestrator import Orchestrator
+from backend.metrics_engine import get_system_metrics
 
 
 # -------------------------
@@ -18,7 +19,6 @@ app = FastAPI()
 
 orchestrator = Orchestrator()
 
-# son sonuç cache
 LATEST_DATA = []
 
 
@@ -34,13 +34,11 @@ def run_loop():
     print("🔥 ORCHESTRATOR READY")
 
     while True:
-
         try:
             print("🔁 LOOP TICK")
 
             data = orchestrator.run_cycle()
 
-            # güvenli cache
             if isinstance(data, list):
                 LATEST_DATA = data
 
@@ -51,12 +49,11 @@ def run_loop():
 
 
 # -------------------------
-# STARTUP EVENT
+# STARTUP
 # -------------------------
 
 @app.on_event("startup")
 def startup_event():
-
     thread = threading.Thread(target=run_loop, daemon=True)
     thread.start()
 
@@ -74,7 +71,7 @@ def root():
 
 
 # -------------------------
-# INTELLIGENCE FEED
+# INTEL FEED
 # -------------------------
 
 @app.get("/intel")
@@ -90,9 +87,20 @@ def get_intel():
 
 
 # -------------------------
+# METRICS
+# -------------------------
+
+@app.get("/metrics")
+def metrics():
+    return JSONResponse(get_system_metrics())
+
+
+# -------------------------
 # HEALTH
 # -------------------------
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok"
+    }
