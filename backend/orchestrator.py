@@ -44,6 +44,16 @@ class Orchestrator:
         self.intelligence = GlobalIntelligenceEngine()
         self.decision = DecisionEngine()
 
+        # 🔥 SINGLE SOURCE OF TRUTH
+        self.state = {
+            "cycle_count": 0,
+            "last_signal_count": 0,
+            "last_event_count": 0,
+            "dominance": [],
+            "anomalies": [],
+            "status": "running"
+        }
+
     def run_cycle(self):
 
         start = time.time()
@@ -66,10 +76,9 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
-            print("CRISIS SIGNALS:", len(crisis_signals))
 
             crisis_map = {}
             for c in crisis_signals:
@@ -102,7 +111,7 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS BOOST
             # -------------------------
             for s in signals:
 
@@ -110,10 +119,7 @@ class Orchestrator:
 
                 if topic in crisis_map:
                     crisis = crisis_map[topic]
-
                     s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
             # -------------------------
@@ -122,7 +128,7 @@ class Orchestrator:
             decisions = self.decision.evaluate(signals)
 
             if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
+                logger.warning("[ORCHESTRATOR] No decisions")
                 return
 
             # -------------------------
@@ -134,10 +140,9 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
-                    item["decision"] = decisions[i].get("decision", {})
+                    item["decision"] = decisions[i]
 
             # -------------------------
             # 9. GENERATION
@@ -155,11 +160,8 @@ class Orchestrator:
                     if is_duplicate(topic):
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
-
-                    if not publish:
-                        print("SKIPPED:", topic)
+                    decision = item.get("decision", {})
+                    if not decision.get("publish", False):
                         continue
 
                     narrative = item.get("narrative") or {}
@@ -167,24 +169,40 @@ class Orchestrator:
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
 
-                    print("GENERATING:", title)
-
                     save_post(title, content)
 
                     generated += 1
 
-                    logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
-                    )
+                    logger.info(f"[GENERATED] {topic}")
 
                 except Exception as e:
                     print("GEN ERROR:", e)
-                    continue
 
-            print("GENERATED COUNT:", generated)
+            # -------------------------
+            # 10. STATE UPDATE (CRITICAL FIX)
+            # -------------------------
 
-            if generated == 0:
-                logger.warning("[ORCHESTRATOR] NOTHING GENERATED")
+            self.state["cycle_count"] = self.cycle
+            self.state["last_signal_count"] = len(signals)
+            self.state["last_event_count"] = len(crisis_signals)
+
+            self.state["dominance"] = [
+                {
+                    "topic": s.get("topic"),
+                    "score": s.get("score", 0)
+                }
+                for s in signals[:10]
+            ]
+
+            self.state["anomalies"] = [
+                {
+                    "type": c.get("type", "spike"),
+                    "topic": c.get("title") or c.get("topic", "")
+                }
+                for c in crisis_signals[:5]
+            ]
+
+            print("GENERATED:", generated)
 
         except Exception:
             traceback.print_exc()
