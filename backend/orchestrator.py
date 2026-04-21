@@ -15,7 +15,9 @@ from ai_engine.signal_cluster import cluster_signals
 from ai_engine.global_crisis_radar import detect_crisis_signals
 
 from backend.storage import save_post
+from ai_engine.learning_engine import LearningEngine
 
+self.learning = LearningEngine()
 
 LAST_DATA = []
 duplicate_cache = {}
