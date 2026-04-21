@@ -3,17 +3,14 @@ import traceback
 import hashlib
 
 from backend.logger import logger
-
 from ai_engine.multi_crawler import crawl
 from ai_engine.data_pipeline import process_data
 from ai_engine.signal_detector import detect_signals
 from ai_engine.signal_ranking_engine import merge_ranked_signals
-
+from ai_engine.signal_cluster import cluster_signals
 from ai_engine.global_intelligence_engine import GlobalIntelligenceEngine
 from ai_engine.decision_engine import DecisionEngine
-from ai_engine.signal_cluster import cluster_signals
 from ai_engine.global_crisis_radar import detect_crisis_signals
-
 from backend.storage import save_post
 
 
@@ -23,13 +20,12 @@ duplicate_cache = {}
 
 def is_duplicate(topic):
     try:
-        time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
+        bucket = int(time.time() / 300)
+        h = hashlib.md5((str(topic).lower() + str(bucket)).encode()).hexdigest()
     except:
         return False
 
     now = time.time()
-
     if h in duplicate_cache and now - duplicate_cache[h] < 300:
         return True
 
@@ -44,12 +40,19 @@ class Orchestrator:
         self.intelligence = GlobalIntelligenceEngine()
         self.decision = DecisionEngine()
 
+        # 🔥 TEK MERKEZ STATE (frontend bunu okur)
+        self.state = {
+            "cycle_count": 0,
+            "last_signal_count": 0,
+            "last_event_count": 0,
+            "dominance": [],
+            "anomalies": []
+        }
+
     def run_cycle(self):
 
         start = time.time()
         self.cycle += 1
-
-        logger.info(f"[ORCHESTRATOR] Cycle {self.cycle} started")
 
         try:
             # -------------------------
@@ -58,7 +61,7 @@ class Orchestrator:
             raw = crawl()
 
             if not raw:
-                raw = LAST_DATA or [{"title": "fallback signal"}]
+                raw = LAST_DATA or [{"title": "fallback"}]
 
             raw = process_data(raw)
 
@@ -66,129 +69,93 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
-            print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
             # 3. SIGNALS
             # -------------------------
             signals = detect_signals(raw)
-
-            if not signals:
-                signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
-                    for x in raw[:5]
-                ]
-
-            # -------------------------
-            # 4. RANK
-            # -------------------------
             signals = merge_ranked_signals(signals)
-
-            # -------------------------
-            # 5. CLUSTER
-            # -------------------------
             signals = cluster_signals(signals)
 
             if not signals:
-                logger.warning("[ORCHESTRATOR] No signals after clustering")
-                return
+                return self.state
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 4. CRISIS ENRICHMENT
             # -------------------------
             for s in signals:
-
                 topic = str(s.get("topic", "")).lower()
 
                 if topic in crisis_map:
-                    crisis = crisis_map[topic]
-
-                    s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
+                    c = crisis_map[topic]
+                    s["urgency"] = c.get("urgency", "high")
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
             # -------------------------
-            # 7. DECISION
+            # 5. DECISION + INTEL
             # -------------------------
             decisions = self.decision.evaluate(signals)
-
-            if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
-                return
-
-            # -------------------------
-            # 8. INTELLIGENCE
-            # -------------------------
             intel_items = self.intelligence.run(decisions)
 
-            if not intel_items:
-                logger.warning("[ORCHESTRATOR] No intelligence output")
-                return
-
-            # decision fix
-            for i, item in enumerate(intel_items):
-                if i < len(decisions):
-                    item["decision"] = decisions[i].get("decision", {})
+            # -------------------------
+            # 6. DOMINANCE (UI FEED)
+            # -------------------------
+            dominance = [
+                {
+                    "topic": s.get("topic"),
+                    "score": s.get("score", 0)
+                }
+                for s in signals[:10]
+            ]
 
             # -------------------------
-            # 9. GENERATION
+            # 7. UPDATE STATE (CRITICAL)
             # -------------------------
-            generated = 0
+            self.state = {
+                "cycle_count": self.cycle,
+                "last_signal_count": len(signals),
+                "last_event_count": len(crisis_signals),
+                "dominance": dominance,
+                "anomalies": crisis_signals[:5]
+            }
 
+            # -------------------------
+            # 8. GENERATION
+            # -------------------------
             for item in intel_items:
 
                 try:
-                    topic = str(item.get("topic") or "").strip()
-
-                    if not topic:
+                    topic = item.get("topic")
+                    if not topic or is_duplicate(topic):
                         continue
 
-                    if is_duplicate(topic):
+                    decision = item.get("decision", {})
+                    if not decision.get("publish", False):
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    narrative = item.get("narrative", {})
 
-                    if not publish:
-                        print("SKIPPED:", topic)
-                        continue
-
-                    narrative = item.get("narrative") or {}
-
-                    title = narrative.get("title") or topic[:80]
-                    content = narrative.get("content") or topic
-
-                    print("GENERATING:", title)
-
-                    save_post(title, content)
-
-                    generated += 1
-
-                    logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                    save_post(
+                        narrative.get("title", topic[:80]),
+                        narrative.get("content", topic)
                     )
 
-                except Exception as e:
-                    print("GEN ERROR:", e)
+                except Exception:
                     continue
 
-            print("GENERATED COUNT:", generated)
-
-            if generated == 0:
-                logger.warning("[ORCHESTRATOR] NOTHING GENERATED")
+            return self.state
 
         except Exception:
             traceback.print_exc()
+            return self.state
 
         finally:
-            duration = round(time.time() - start, 2)
-            logger.info(f"[ORCHESTRATOR] Cycle finished in {duration}s")
+            logger.info(f"[ORCH] cycle={self.cycle} time={time.time()-start:.2f}s")
