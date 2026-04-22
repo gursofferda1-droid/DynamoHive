@@ -10,24 +10,28 @@ class DecisionEngine:
         scored = []
 
         # -------------------------
-        # 1. SCORING
+        # 1. SCORING PHASE
         # -------------------------
         for item in items:
 
             try:
-                signal = item.get("signal", {})
-                prediction = item.get("prediction", {})
-                reasoning = item.get("reasoning", {})
+                signal = item.get("signal") or {}
+                prediction = item.get("prediction") or {}
+                reasoning = item.get("reasoning") or {}
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+                score = float(signal.get("score") or 0)
 
-                if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+                impact = float(prediction.get("impact_score") or 0.5)
 
-                urgency = item.get("urgency", "low")
+                confidence = (
+                    reasoning.get("confidence")
+                    if isinstance(reasoning, dict)
+                    else 0.5
+                )
+
+                confidence = float(confidence or 0.5)
+
+                urgency = item.get("urgency") or "low"
 
                 urgency_map = {
                     "low": 0.3,
@@ -37,15 +41,19 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
+                # -------------------------
+                # PRIORITY SCORE
+                # -------------------------
                 priority = (
-                    (score * 0.30) +
-                    (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
+                    score * 0.30 +
+                    impact * 0.25 +
+                    confidence * 0.25 +
+                    urgency_score * 0.20
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
+                # -------------------------
+                # HARD FILTER
+                # -------------------------
                 if score < 0.15 and impact < 0.25:
                     continue
 
@@ -60,16 +68,16 @@ class DecisionEngine:
                     }
                 })
 
-            except:
+            except Exception:
                 continue
 
         if not scored:
             return []
 
         # -------------------------
-        # 2. SORT
+        # 2. SORTING
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
         # -------------------------
         # 3. SELECTION
@@ -88,20 +96,20 @@ class DecisionEngine:
             if s["priority"] < MIN_THRESHOLD:
                 continue
 
-            topic = str(s["item"].get("topic", "")).lower()
+            topic = str(s["item"].get("topic") or "").strip().lower()
 
-            if topic in used_topics:
+            if not topic or topic in used_topics:
                 continue
 
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
+        # fallback: en az 1 içerik
         if not selected and scored:
             selected = [scored[0]]
 
         # -------------------------
-        # 4. ATTACH DECISION
+        # 4. DECISION ATTACHMENT
         # -------------------------
         for idx, s in enumerate(scored):
 
