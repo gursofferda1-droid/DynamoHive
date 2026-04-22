@@ -1,121 +1,75 @@
-class DecisionEngine:
+class AdaptiveFilter:
 
-    def evaluate(self, items):
+    def __init__(self):
 
-        output = []
+        # başlangıç eşikleri
+        self.base_threshold = 0.10
+        self.max_threshold = 0.25
 
-        if not isinstance(items, list) or not items:
-            return output
+        # öğrenme hafızası
+        self.history = []   # (priority, published)
 
-        scored = []
+        # dinamik eşik
+        self.dynamic_threshold = self.base_threshold
 
-        # -------------------------
-        # 1. SCORING
-        # -------------------------
+    # -------------------------
+    # FEEDBACK (ÖĞRENME)
+    # -------------------------
+    def update_feedback(self, items):
+
         for item in items:
 
-            try:
-                signal = item.get("signal", {})
-                prediction = item.get("prediction", {})
-                reasoning = item.get("reasoning", {})
+            decision = item.get("decision", {})
+            priority = decision.get("priority", 0)
+            published = decision.get("publish", False)
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+            self.history.append((priority, published))
 
-                if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+        # son 50 karar üzerinden öğren
+        recent = self.history[-50:]
 
-                urgency = item.get("urgency", "low")
+        if len(recent) < 10:
+            return
 
-                urgency_map = {
-                    "low": 0.3,
-                    "medium": 0.6,
-                    "high": 0.9
-                }
+        published_scores = [p for p, pub in recent if pub]
+        rejected_scores = [p for p, pub in recent if not pub]
 
-                urgency_score = urgency_map.get(urgency, 0.3)
+        if not published_scores or not rejected_scores:
+            return
 
-                # 🔥 FINAL PRIORITY
-                priority = (
-                    (score * 0.30) +
-                    (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
-                )
-
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
-                    continue
-
-                scored.append({
-                    "item": item,
-                    "priority": priority,
-                    "meta": {
-                        "score": score,
-                        "impact": impact,
-                        "confidence": confidence,
-                        "urgency": urgency
-                    }
-                })
-
-            except:
-                continue
-
-        if not scored:
-            return []
+        avg_pub = sum(published_scores) / len(published_scores)
+        avg_rej = sum(rejected_scores) / len(rejected_scores)
 
         # -------------------------
-        # 2. SORT
+        # ADAPTIVE RULE
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        # eğer çok düşükleri yayınlıyorsak sıkılaştır
+        if avg_pub < avg_rej:
+            self.dynamic_threshold = min(
+                self.max_threshold,
+                self.dynamic_threshold + 0.02
+            )
 
-        # -------------------------
-        # 3. SELECTION
-        # -------------------------
-        TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        # eğer çok şey kaçırıyorsak gevşet
+        else:
+            self.dynamic_threshold = max(
+                self.base_threshold,
+                self.dynamic_threshold - 0.02
+            )
 
-        selected = []
-        used_topics = set()
+    # -------------------------
+    # FILTER CHECK
+    # -------------------------
+    def allow(self, priority):
 
-        for s in scored:
+        return priority >= self.dynamic_threshold
 
-            if len(selected) >= TOP_K:
-                break
+    # -------------------------
+    # DEBUG
+    # -------------------------
+    def debug(self):
 
-            if s["priority"] < MIN_THRESHOLD:
-                continue
-
-            topic = str(s["item"].get("topic", "")).lower()
-
-            if topic in used_topics:
-                continue
-
-            used_topics.add(topic)
-            selected.append(s)
-
-        # fallback → en az 1 içerik
-        if not selected and scored:
-            selected = [scored[0]]
-
-        # -------------------------
-        # 4. ATTACH DECISION
-        # -------------------------
-        for idx, s in enumerate(scored):
-
-            item = s["item"]
-
-            publish = s in selected
-
-            item["decision"] = {
-                "publish": publish,
-                "priority": round(s["priority"], 3),
-                "rank": idx + 1,
-                **s["meta"]
-            }
-
-            output.append(item)
-
-        return output
+        return {
+            "dynamic_threshold": round(self.dynamic_threshold, 3),
+            "history_size": len(self.history)
+        }
