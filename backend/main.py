@@ -3,44 +3,69 @@ from fastapi.responses import JSONResponse
 import threading
 import time
 
-from backend.orchestrator import Orchestrator
+from ai_engine.v2.state_store import StateStore
+from ai_engine.v2.event_bus import EventBus
+from ai_engine.v2.signal_queue import SignalQueue
+from ai_engine.v2.execution_graph import ExecutionGraph
+from ai_engine.v2.orchestrator_v2 import OrchestratorV2
+
+from backend.storage import save_post
 
 
 # -------------------------
 # APP
 # -------------------------
-
 app = FastAPI()
 
 # -------------------------
-# GLOBAL ORCHESTRATOR
+# LATEST CACHE
 # -------------------------
-
-orchestrator = Orchestrator()
-
-# son sonuç cache
 LATEST_DATA = []
+
+# -------------------------
+# V2 CORE INIT
+# -------------------------
+state = StateStore()
+bus = EventBus()
+queue = SignalQueue()
+
+graph = ExecutionGraph(
+    state=state,
+    bus=bus,
+    queue=queue,
+    worker_pool=None,
+    intelligence_engine=None,
+    decision_engine=None,
+    storage=save_post
+)
+
+orchestrator = OrchestratorV2(
+    state=state,
+    bus=bus,
+    queue=queue,
+    execution_graph=graph
+)
 
 
 # -------------------------
 # BACKGROUND LOOP
 # -------------------------
-
 def run_loop():
 
     global LATEST_DATA
 
-    print("🚀 FORCE START")
-    print("🔥 ORCHESTRATOR READY")
+    print("🚀 V2 FORCE START")
+    print("🔥 ORCHESTRATOR V2 READY")
 
     while True:
 
         try:
             print("🔁 LOOP TICK")
 
+            # V2 CYCLE
             data = orchestrator.run_cycle()
 
-            # güvenli cache
+            # cache update (opsiyonel)
             if isinstance(data, list):
                 LATEST_DATA = data
 
@@ -51,12 +76,10 @@ def run_loop():
 
 
 # -------------------------
-# STARTUP EVENT
+# STARTUP
 # -------------------------
-
 @app.on_event("startup")
 def startup_event():
-
     thread = threading.Thread(target=run_loop, daemon=True)
     thread.start()
 
@@ -64,35 +87,25 @@ def startup_event():
 # -------------------------
 # ROOT
 # -------------------------
-
 @app.get("/")
 def root():
     return {
-        "status": "DynamoHive running",
+        "status": "DynamoHive V2 running",
         "items": len(LATEST_DATA)
     }
 
 
 # -------------------------
-# INTELLIGENCE FEED
+# INTEL FEED
 # -------------------------
-
 @app.get("/intel")
-def get_intel():
-
-    if not LATEST_DATA:
-        return JSONResponse({
-            "status": "warming up",
-            "data": []
-        })
-
+def intel():
     return JSONResponse(LATEST_DATA)
 
 
 # -------------------------
 # HEALTH
 # -------------------------
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
