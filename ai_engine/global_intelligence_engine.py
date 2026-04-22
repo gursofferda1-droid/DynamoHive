@@ -17,33 +17,50 @@ class GlobalIntelligenceEngine:
 
         results = []
 
+        if not isinstance(signals, list):
+            return results
+
         for signal in signals:
 
             try:
-                # 🔥 KRİTİK FIX: topic fallback
+                # -------------------------
+                # TOPIC RESOLUTION
+                # -------------------------
                 topic = str(
-                    signal.get("topic") or
-                    signal.get("title") or
-                    signal.get("text") or
-                    ""
+                    signal.get("topic")
+                    or signal.get("title")
+                    or signal.get("text")
+                    or ""
                 ).strip()
 
                 if not topic:
-                    print("SKIP EMPTY TOPIC:", signal)
                     continue
 
-                print("PROCESSING:", topic)
-
+                # -------------------------
+                # MEMORY LAYER
+                # -------------------------
                 mem = self.memory.load(signal) or {}
 
+                # -------------------------
+                # CONTEXT LAYER
+                # -------------------------
                 ctx = self.context.build(signal, mem) or {}
 
+                # -------------------------
+                # REASONING LAYER
+                # -------------------------
                 reasoning = self.reasoning.analyze(signal, ctx) or {}
 
                 ctx["insight"] = reasoning.get("insight", "")
 
+                # -------------------------
+                # PREDICTION LAYER
+                # -------------------------
                 prediction = self.prediction.forecast(signal, ctx) or {}
 
+                # -------------------------
+                # INTELLIGENCE OBJECT
+                # -------------------------
                 intel = {
                     "topic": topic,
                     "signal": signal,
@@ -56,25 +73,24 @@ class GlobalIntelligenceEngine:
                     "urgency": prediction.get("urgency", "low"),
                 }
 
+                # -------------------------
+                # NARRATIVE GENERATION
+                # -------------------------
                 narrative = generate_narrative(intel)
 
                 if not narrative:
-                    print("NO NARRATIVE:", topic)
+                    narrative = {
+                        "title": topic[:80],
+                        "content": topic,
+                        "meta": {}
+                    }
 
-                intel["narrative"] = narrative or {
-                    "title": topic[:80],
-                    "content": topic,
-                    "meta": {}
-                }
+                intel["narrative"] = narrative
 
                 results.append(intel)
 
             except Exception as e:
-                # 🔥 EN KRİTİK SATIR
-                print("INTELLIGENCE ERROR:", e)
-                print("FAILED SIGNAL:", signal)
+                print("[INTEL ERROR]", e)
                 continue
-
-        print("INTEL OUTPUT COUNT:", len(results))
 
         return results
