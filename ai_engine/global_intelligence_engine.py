@@ -17,33 +17,67 @@ class GlobalIntelligenceEngine:
 
         results = []
 
+        if not isinstance(signals, list):
+            return results
+
         for signal in signals:
 
             try:
-                # 🔥 KRİTİK FIX: topic fallback
+                if not isinstance(signal, dict):
+                    continue
+
+                # -------------------------
+                # TOPIC SAFE RESOLVE
+                # -------------------------
                 topic = str(
-                    signal.get("topic") or
-                    signal.get("title") or
-                    signal.get("text") or
-                    ""
+                    signal.get("topic")
+                    or signal.get("title")
+                    or signal.get("text")
+                    or ""
                 ).strip()
 
                 if not topic:
-                    print("SKIP EMPTY TOPIC:", signal)
                     continue
 
-                print("PROCESSING:", topic)
+                print(f"[INTEL] PROCESSING: {topic}")
 
-                mem = self.memory.load(signal) or {}
+                # -------------------------
+                # MEMORY
+                # -------------------------
+                try:
+                    mem = self.memory.load(signal) or {}
+                except:
+                    mem = {}
 
-                ctx = self.context.build(signal, mem) or {}
+                # -------------------------
+                # CONTEXT
+                # -------------------------
+                try:
+                    ctx = self.context.build(signal, mem) or {}
+                except:
+                    ctx = {}
 
-                reasoning = self.reasoning.analyze(signal, ctx) or {}
+                # -------------------------
+                # REASONING
+                # -------------------------
+                try:
+                    reasoning = self.reasoning.analyze(signal, ctx) or {}
+                except:
+                    reasoning = {}
 
                 ctx["insight"] = reasoning.get("insight", "")
 
-                prediction = self.prediction.forecast(signal, ctx) or {}
+                # -------------------------
+                # PREDICTION
+                # -------------------------
+                try:
+                    prediction = self.prediction.forecast(signal, ctx) or {}
+                except:
+                    prediction = {}
 
+                # -------------------------
+                # INTEL OBJECT
+                # -------------------------
                 intel = {
                     "topic": topic,
                     "signal": signal,
@@ -56,25 +90,29 @@ class GlobalIntelligenceEngine:
                     "urgency": prediction.get("urgency", "low"),
                 }
 
-                narrative = generate_narrative(intel)
+                # -------------------------
+                # NARRATIVE
+                # -------------------------
+                try:
+                    narrative = generate_narrative(intel)
+                except:
+                    narrative = None
 
                 if not narrative:
-                    print("NO NARRATIVE:", topic)
+                    narrative = {
+                        "title": topic[:80],
+                        "content": topic,
+                        "meta": {}
+                    }
 
-                intel["narrative"] = narrative or {
-                    "title": topic[:80],
-                    "content": topic,
-                    "meta": {}
-                }
+                intel["narrative"] = narrative
 
                 results.append(intel)
 
             except Exception as e:
-                # 🔥 EN KRİTİK SATIR
-                print("INTELLIGENCE ERROR:", e)
-                print("FAILED SIGNAL:", signal)
+                print("[INTELLIGENCE ERROR]", e)
                 continue
 
-        print("INTEL OUTPUT COUNT:", len(results))
+        print(f"[INTEL] OUTPUT COUNT: {len(results)}")
 
         return results
