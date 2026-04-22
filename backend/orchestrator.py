@@ -21,10 +21,11 @@ LAST_DATA = []
 duplicate_cache = {}
 
 
-def is_duplicate(topic):
+def is_duplicate(topic: str) -> bool:
     try:
-        time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
+        bucket = int(time.time() / 300)
+        key = f"{str(topic).lower()}_{bucket}"
+        h = hashlib.md5(key.encode()).hexdigest()
     except:
         return False
 
@@ -58,7 +59,7 @@ class Orchestrator:
             raw = crawl()
 
             if not raw:
-                raw = LAST_DATA or [{"title": "fallback signal"}]
+                raw = LAST_DATA[-50:] if LAST_DATA else [{"title": "fallback signal"}]
 
             raw = process_data(raw)
 
@@ -66,15 +67,13 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
-            crisis_signals = detect_crisis_signals(raw)
-            print("CRISIS SIGNALS:", len(crisis_signals))
-
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_signals = detect_crisis_signals(raw) or []
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
             # 3. SIGNALS
@@ -83,7 +82,10 @@ class Orchestrator:
 
             if not signals:
                 signals = [
-                    {"topic": str(x.get("title") or "fallback"), "score": 1.0}
+                    {
+                        "topic": str(x.get("title") or "fallback"),
+                        "score": 1.0
+                    }
                     for x in raw[:5]
                 ]
 
@@ -95,14 +97,14 @@ class Orchestrator:
             # -------------------------
             # 5. CLUSTER
             # -------------------------
-            signals = cluster_signals(signals)
+            signals = cluster_signals(signals) or []
 
             if not signals:
                 logger.warning("[ORCHESTRATOR] No signals after clustering")
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 6. CRISIS ENRICHMENT
             # -------------------------
             for s in signals:
 
@@ -112,29 +114,27 @@ class Orchestrator:
                     crisis = crisis_map[topic]
 
                     s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
             # -------------------------
             # 7. DECISION
             # -------------------------
-            decisions = self.decision.evaluate(signals)
+            decisions = self.decision.evaluate(signals) or []
 
             if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
+                logger.warning("[ORCHESTRATOR] No decisions produced")
                 return
 
             # -------------------------
             # 8. INTELLIGENCE
             # -------------------------
-            intel_items = self.intelligence.run(decisions)
+            intel_items = self.intelligence.run(decisions) or []
 
             if not intel_items:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
+            # decision sync fix
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
@@ -155,11 +155,10 @@ class Orchestrator:
                     if is_duplicate(topic):
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    decision = item.get("decision", {})
+                    publish = decision.get("publish", False)
 
                     if not publish:
-                        print("SKIPPED:", topic)
                         continue
 
                     narrative = item.get("narrative") or {}
@@ -167,21 +166,17 @@ class Orchestrator:
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
 
-                    print("GENERATING:", title)
-
                     save_post(title, content)
 
                     generated += 1
 
                     logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A')}"
                     )
 
                 except Exception as e:
-                    print("GEN ERROR:", e)
+                    logger.error(f"[GEN ERROR] {e}")
                     continue
-
-            print("GENERATED COUNT:", generated)
 
             if generated == 0:
                 logger.warning("[ORCHESTRATOR] NOTHING GENERATED")
