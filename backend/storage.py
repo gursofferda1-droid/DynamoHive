@@ -1,25 +1,33 @@
 import sqlite3
 import os
 import time
+import hashlib
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_DIR = os.path.join(BASE_DIR, "database")
 DB_PATH = os.path.join(DB_DIR, "dynamohive.db")
 
 
+# -------------------------
+# INIT DB (SAFE + STABLE)
+# -------------------------
 def init_db():
-
     if not os.path.exists(DB_DIR):
         os.makedirs(DB_DIR)
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # performance + concurrency
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
             content TEXT,
+            hash TEXT UNIQUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -28,65 +36,85 @@ def init_db():
     conn.close()
 
 
+# -------------------------
+# CONNECTION
+# -------------------------
 def get_connection():
     init_db()
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
+# -------------------------
+# HASH (IDEMPOTENCY CORE)
+# -------------------------
+def generate_hash(title, content):
+    raw = f"{str(title).strip().lower()}::{str(content).strip().lower()}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+# -------------------------
+# SAVE POST (SAFE WRITE)
+# -------------------------
 def save_post(title, content):
 
+    h = generate_hash(title, content)
+
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO posts (title, content)
-            VALUES (?, ?)
-        """, (title, content))
+            # duplicate guard at DB level
+            cursor.execute("""
+                INSERT OR IGNORE INTO posts (title, content, hash)
+                VALUES (?, ?, ?)
+            """, (title, content, h))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+
+            return True
 
     except Exception as e:
-        print("DB write error:", e)
+        print("DB WRITE ERROR:", e)
+        return False
 
 
-def get_posts():
+# -------------------------
+# GET POSTS (STATE READ)
+# -------------------------
+def get_posts(limit=50):
 
     try:
-        conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT id, title, content, created_at
-            FROM posts
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
+            cursor.execute("""
+                SELECT id, title, content, created_at
+                FROM posts
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
 
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
 
-        posts = []
+        results = []
 
         for row in rows:
-            post = dict(row)
+            item = dict(row)
 
             try:
-                post["timestamp"] = time.mktime(
-                    time.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S")
+                item["timestamp"] = time.mktime(
+                    time.strptime(item["created_at"], "%Y-%m-%d %H:%M:%S")
                 )
             except:
-                post["timestamp"] = time.time()
+                item["timestamp"] = time.time()
 
-            post["keywords"] = []
-            post["source"] = "internal"
+            item["source"] = "internal"
+            results.append(item)
 
-            posts.append(post)
-
-        return posts
+        return results
 
     except Exception as e:
-        print("DB read error:", e)
+        print("DB READ ERROR:", e)
         return []
