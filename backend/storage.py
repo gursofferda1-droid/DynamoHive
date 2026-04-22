@@ -8,7 +8,6 @@ DB_PATH = os.path.join(DB_DIR, "dynamohive.db")
 
 
 def init_db():
-
     if not os.path.exists(DB_DIR):
         os.makedirs(DB_DIR)
 
@@ -18,8 +17,8 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            content TEXT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -34,25 +33,29 @@ def get_connection():
 
 
 def save_post(title, content):
+    if not title or not content:
+        return
 
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO posts (title, content)
-            VALUES (?, ?)
-        """, (title, content))
+        cursor.execute(
+            "INSERT INTO posts (title, content) VALUES (?, ?)",
+            (title, content)
+        )
 
         conn.commit()
-        conn.close()
-
     except Exception as e:
         print("DB write error:", e)
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 
-def get_posts():
-
+def get_posts(limit=50):
     try:
         conn = get_connection()
         conn.row_factory = sqlite3.Row
@@ -61,28 +64,19 @@ def get_posts():
         cursor.execute("""
             SELECT id, title, content, created_at
             FROM posts
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
 
         rows = cursor.fetchall()
         conn.close()
 
         posts = []
-
         for row in rows:
             post = dict(row)
-
-            try:
-                post["timestamp"] = time.mktime(
-                    time.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S")
-                )
-            except:
-                post["timestamp"] = time.time()
-
+            post["timestamp"] = time.time()
             post["keywords"] = []
             post["source"] = "internal"
-
             posts.append(post)
 
         return posts
