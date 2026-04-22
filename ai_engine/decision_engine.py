@@ -2,15 +2,13 @@ class DecisionEngine:
 
     def evaluate(self, items):
 
-        output = []
-
         if not isinstance(items, list) or not items:
-            return output
+            return []
 
         scored = []
 
         # -------------------------
-        # 1. SCORING
+        # 1. SCORING PHASE
         # -------------------------
         for item in items:
 
@@ -19,13 +17,12 @@ class DecisionEngine:
                 prediction = item.get("prediction", {})
                 reasoning = item.get("reasoning", {})
 
-                score = signal.get("score", 0)
-                impact = prediction.get("impact_score", 0.5)
+                score = float(signal.get("score", 0) or 0)
+                impact = float(prediction.get("impact_score", 0.5) or 0.5)
 
+                confidence = 0.5
                 if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
+                    confidence = float(reasoning.get("confidence", 0.5) or 0.5)
 
                 urgency = item.get("urgency", "low")
 
@@ -37,7 +34,9 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
+                # -------------------------
+                # FINAL PRIORITY SCORE
+                # -------------------------
                 priority = (
                     (score * 0.30) +
                     (impact * 0.25) +
@@ -45,8 +44,10 @@ class DecisionEngine:
                     (urgency_score * 0.20)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
+                # -------------------------
+                # HARD FILTER (STABLE)
+                # -------------------------
+                if score < 0.10 and impact < 0.20:
                     continue
 
                 scored.append({
@@ -60,7 +61,7 @@ class DecisionEngine:
                     }
                 })
 
-            except:
+            except Exception:
                 continue
 
         if not scored:
@@ -69,13 +70,13 @@ class DecisionEngine:
         # -------------------------
         # 2. SORT
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
         # -------------------------
-        # 3. SELECTION
+        # 3. SELECTION RULES
         # -------------------------
         TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        MIN_THRESHOLD = 0.30
 
         selected = []
         used_topics = set()
@@ -90,19 +91,23 @@ class DecisionEngine:
 
             topic = str(s["item"].get("topic", "")).lower()
 
-            if topic in used_topics:
+            if not topic or topic in used_topics:
                 continue
 
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
+        # -------------------------
+        # 4. FALLBACK (SAFE GUARANTEE)
+        # -------------------------
         if not selected and scored:
             selected = [scored[0]]
 
         # -------------------------
-        # 4. ATTACH DECISION
+        # 5. ATTACH DECISIONS
         # -------------------------
+        output = []
+
         for idx, s in enumerate(scored):
 
             item = s["item"]
@@ -111,7 +116,7 @@ class DecisionEngine:
 
             item["decision"] = {
                 "publish": publish,
-                "priority": round(s["priority"], 3),
+                "priority": round(s["priority"], 4),
                 "rank": idx + 1,
                 **s["meta"]
             }
