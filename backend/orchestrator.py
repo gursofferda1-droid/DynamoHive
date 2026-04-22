@@ -14,8 +14,13 @@ from ai_engine.decision_engine import DecisionEngine
 from ai_engine.signal_cluster import cluster_signals
 from ai_engine.global_crisis_radar import detect_crisis_signals
 
-from backend.storage import save_post
-
+# 🔥 STORAGE INTEGRATION (KRİTİK EKLEME)
+from backend.storage import (
+    save_post,
+    save_signal,
+    save_decision,
+    save_intelligence
+)
 
 LAST_DATA = []
 duplicate_cache = {}
@@ -66,7 +71,7 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
             print("CRISIS SIGNALS:", len(crisis_signals))
@@ -87,14 +92,7 @@ class Orchestrator:
                     for x in raw[:5]
                 ]
 
-            # -------------------------
-            # 4. RANK
-            # -------------------------
             signals = merge_ranked_signals(signals)
-
-            # -------------------------
-            # 5. CLUSTER
-            # -------------------------
             signals = cluster_signals(signals)
 
             if not signals:
@@ -102,7 +100,7 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 4. CRISIS ENRICHMENT
             # -------------------------
             for s in signals:
 
@@ -110,14 +108,21 @@ class Orchestrator:
 
                 if topic in crisis_map:
                     crisis = crisis_map[topic]
-
                     s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
+                # 🔥 SAVE SIGNAL (NEW)
+                try:
+                    save_signal(
+                        topic=s.get("topic"),
+                        score=s.get("score", 0),
+                        raw_data=s
+                    )
+                except Exception as e:
+                    print("SIGNAL SAVE ERROR:", e)
+
             # -------------------------
-            # 7. DECISION
+            # 5. DECISION
             # -------------------------
             decisions = self.decision.evaluate(signals)
 
@@ -125,8 +130,19 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No signals passed decision filter")
                 return
 
+            # 🔥 SAVE DECISIONS (NEW)
+            for d in decisions:
+                try:
+                    item = d
+                    save_decision(
+                        topic=item.get("topic"),
+                        decision=item.get("decision", {})
+                    )
+                except Exception as e:
+                    print("DECISION SAVE ERROR:", e)
+
             # -------------------------
-            # 8. INTELLIGENCE
+            # 6. INTELLIGENCE
             # -------------------------
             intel_items = self.intelligence.run(decisions)
 
@@ -134,13 +150,24 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
 
+            # 🔥 SAVE INTELLIGENCE (NEW)
+            for item in intel_items:
+                try:
+                    save_intelligence(
+                        topic=item.get("topic"),
+                        narrative=item.get("narrative", {}),
+                        reasoning=item.get("reasoning", {}),
+                        decision_ref=str(item.get("decision", {}))
+                    )
+                except Exception as e:
+                    print("INTELLIGENCE SAVE ERROR:", e)
+
             # -------------------------
-            # 9. GENERATION
+            # 7. GENERATION
             # -------------------------
             generated = 0
 
@@ -169,7 +196,11 @@ class Orchestrator:
 
                     print("GENERATING:", title)
 
-                    save_post(title, content)
+                    save_post(
+                        title,
+                        content,
+                        topic=topic
+                    )
 
                     generated += 1
 
