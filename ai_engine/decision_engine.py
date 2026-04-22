@@ -1,4 +1,12 @@
+from backend.storage import get_feedback, get_state, set_state
+
+
 class DecisionEngine:
+
+    def __init__(self):
+        # 🔥 platform memory injection
+        self.feedback_history = get_feedback(200)
+        self.global_state = get_state("decision_state") or {}
 
     def evaluate(self, items):
 
@@ -10,7 +18,12 @@ class DecisionEngine:
         scored = []
 
         # -------------------------
-        # 1. SCORING
+        # 0. MEMORY WEIGHT ADAPTATION
+        # -------------------------
+        topic_success_map = self._build_topic_success_map()
+
+        # -------------------------
+        # 1. SCORING (ENHANCED)
         # -------------------------
         for item in items:
 
@@ -22,11 +35,7 @@ class DecisionEngine:
                 score = signal.get("score", 0)
                 impact = prediction.get("impact_score", 0.5)
 
-                if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
-
+                confidence = reasoning.get("confidence", 0.5) if isinstance(reasoning, dict) else 0.5
                 urgency = item.get("urgency", "low")
 
                 urgency_map = {
@@ -37,16 +46,24 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
+                topic = str(item.get("topic", "")).lower()
+
+                # 🔥 MEMORY BOOST (platform farkı burada)
+                memory_boost = topic_success_map.get(topic, 0)
+
+                # 🔥 FINAL PRIORITY (adaptive)
                 priority = (
-                    (score * 0.30) +
+                    (score * 0.25) +
                     (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
+                    (confidence * 0.20) +
+                    (urgency_score * 0.20) +
+                    (memory_boost * 0.10)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
+                # 🔥 dynamic filter (hard rule yerine adaptive)
+                min_dynamic_score = self.global_state.get("min_score", 0.15)
+
+                if score < min_dynamic_score and impact < 0.25:
                     continue
 
                 scored.append({
@@ -56,11 +73,12 @@ class DecisionEngine:
                         "score": score,
                         "impact": impact,
                         "confidence": confidence,
-                        "urgency": urgency
+                        "urgency": urgency,
+                        "memory_boost": memory_boost
                     }
                 })
 
-            except:
+            except Exception:
                 continue
 
         if not scored:
@@ -69,23 +87,23 @@ class DecisionEngine:
         # -------------------------
         # 2. SORT
         # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
         # -------------------------
-        # 3. SELECTION
+        # 3. SELECTION (ADAPTIVE TOP-K)
         # -------------------------
-        TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        top_k = self.global_state.get("top_k", 5)
+        min_threshold = self.global_state.get("min_threshold", 0.25)
 
         selected = []
         used_topics = set()
 
         for s in scored:
 
-            if len(selected) >= TOP_K:
+            if len(selected) >= top_k:
                 break
 
-            if s["priority"] < MIN_THRESHOLD:
+            if s["priority"] < min_threshold:
                 continue
 
             topic = str(s["item"].get("topic", "")).lower()
@@ -96,7 +114,7 @@ class DecisionEngine:
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
+        # fallback
         if not selected and scored:
             selected = [scored[0]]
 
@@ -106,7 +124,6 @@ class DecisionEngine:
         for idx, s in enumerate(scored):
 
             item = s["item"]
-
             publish = s in selected
 
             item["decision"] = {
@@ -118,4 +135,67 @@ class DecisionEngine:
 
             output.append(item)
 
+        # -------------------------
+        # 5. PLATFORM STATE UPDATE (KRİTİK EK)
+        # -------------------------
+        self._update_state(scored, selected)
+
         return output
+
+    # -------------------------
+    # PLATFORM MEMORY BUILD
+    # -------------------------
+    def _build_topic_success_map(self):
+
+        topic_map = {}
+
+        for f in self.feedback_history:
+
+            try:
+                topic = str(f.get("signal_topic", "")).lower()
+                engagement = float(f.get("engagement_score", 0))
+
+                if not topic:
+                    continue
+
+                if topic not in topic_map:
+                    topic_map[topic] = []
+
+                topic_map[topic].append(engagement)
+
+            except:
+                continue
+
+        # average success
+        return {
+            k: sum(v) / len(v) for k, v in topic_map.items() if v
+        }
+
+    # -------------------------
+    # STATE UPDATE LOOP
+    # -------------------------
+    def _update_state(self, scored, selected):
+
+        try:
+            success_rate = len(selected) / max(len(scored), 1)
+
+            current = self.global_state or {}
+
+            # adaptive tuning
+            current["last_success_rate"] = success_rate
+
+            if success_rate < 0.2:
+                current["min_threshold"] = min(
+                    current.get("min_threshold", 0.25) + 0.05,
+                    0.6
+                )
+            else:
+                current["min_threshold"] = max(
+                    current.get("min_threshold", 0.25) - 0.01,
+                    0.1
+                )
+
+            set_state("decision_state", current)
+
+        except:
+            pass
