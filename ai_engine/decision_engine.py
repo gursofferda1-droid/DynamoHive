@@ -2,16 +2,12 @@ class DecisionEngine:
 
     def evaluate(self, items):
 
-        output = []
-
-        if not isinstance(items, list) or not items:
-            return output
+        if not items:
+            return []
 
         scored = []
 
-        # -------------------------
         # 1. SCORING
-        # -------------------------
         for item in items:
 
             try:
@@ -21,12 +17,7 @@ class DecisionEngine:
 
                 score = signal.get("score", 0)
                 impact = prediction.get("impact_score", 0.5)
-
-                if isinstance(reasoning, dict):
-                    confidence = reasoning.get("confidence", 0.5)
-                else:
-                    confidence = 0.5
-
+                confidence = reasoning.get("confidence", 0.5) if isinstance(reasoning, dict) else 0.5
                 urgency = item.get("urgency", "low")
 
                 urgency_map = {
@@ -37,15 +28,14 @@ class DecisionEngine:
 
                 urgency_score = urgency_map.get(urgency, 0.3)
 
-                # 🔥 FINAL PRIORITY
                 priority = (
-                    (score * 0.30) +
-                    (impact * 0.25) +
-                    (confidence * 0.25) +
-                    (urgency_score * 0.20)
+                    score * 0.30 +
+                    impact * 0.25 +
+                    confidence * 0.25 +
+                    urgency_score * 0.20
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
+                # HARD FILTER
                 if score < 0.15 and impact < 0.25:
                     continue
 
@@ -66,14 +56,10 @@ class DecisionEngine:
         if not scored:
             return []
 
-        # -------------------------
         # 2. SORT
-        # -------------------------
-        scored = sorted(scored, key=lambda x: x["priority"], reverse=True)
+        scored.sort(key=lambda x: x["priority"], reverse=True)
 
-        # -------------------------
         # 3. SELECTION
-        # -------------------------
         TOP_K = 5
         MIN_THRESHOLD = 0.25
 
@@ -96,17 +82,15 @@ class DecisionEngine:
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
         if not selected and scored:
             selected = [scored[0]]
 
-        # -------------------------
         # 4. ATTACH DECISION
-        # -------------------------
+        output = []
+
         for idx, s in enumerate(scored):
 
             item = s["item"]
-
             publish = s in selected
 
             item["decision"] = {
