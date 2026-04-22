@@ -3,6 +3,7 @@ import traceback
 import hashlib
 
 from backend.logger import logger
+from backend.storage import save_post, store_feedback, set_state
 
 from ai_engine.multi_crawler import crawl
 from ai_engine.data_pipeline import process_data
@@ -14,17 +15,17 @@ from ai_engine.decision_engine import DecisionEngine
 from ai_engine.signal_cluster import cluster_signals
 from ai_engine.global_crisis_radar import detect_crisis_signals
 
-from backend.storage import save_post
-
 
 LAST_DATA = []
 duplicate_cache = {}
 
 
-def is_duplicate(topic):
+def is_duplicate(topic: str) -> bool:
     try:
         time_bucket = int(time.time() / 300)
-        h = hashlib.md5((str(topic).lower() + str(time_bucket)).encode()).hexdigest()
+        h = hashlib.md5(
+            (str(topic).lower() + str(time_bucket)).encode()
+        ).hexdigest()
     except:
         return False
 
@@ -53,7 +54,7 @@ class Orchestrator:
 
         try:
             # -------------------------
-            # 1. DATA
+            # 1. DATA INGESTION
             # -------------------------
             raw = crawl()
 
@@ -66,18 +67,17 @@ class Orchestrator:
             LAST_DATA.extend(raw[:100])
 
             # -------------------------
-            # 2. 🔥 CRISIS DETECTION
+            # 2. CRISIS DETECTION
             # -------------------------
             crisis_signals = detect_crisis_signals(raw)
-            print("CRISIS SIGNALS:", len(crisis_signals))
 
-            crisis_map = {}
-            for c in crisis_signals:
-                key = str(c.get("title", "")).lower()
-                crisis_map[key] = c
+            crisis_map = {
+                str(c.get("title", "")).lower(): c
+                for c in crisis_signals
+            }
 
             # -------------------------
-            # 3. SIGNALS
+            # 3. SIGNAL GENERATION
             # -------------------------
             signals = detect_signals(raw)
 
@@ -88,13 +88,9 @@ class Orchestrator:
                 ]
 
             # -------------------------
-            # 4. RANK
+            # 4. RANK + CLUSTER
             # -------------------------
             signals = merge_ranked_signals(signals)
-
-            # -------------------------
-            # 5. CLUSTER
-            # -------------------------
             signals = cluster_signals(signals)
 
             if not signals:
@@ -102,31 +98,27 @@ class Orchestrator:
                 return
 
             # -------------------------
-            # 6. 🔥 CRISIS ENRICHMENT
+            # 5. CRISIS BOOST
             # -------------------------
             for s in signals:
-
                 topic = str(s.get("topic", "")).lower()
 
                 if topic in crisis_map:
                     crisis = crisis_map[topic]
-
                     s["urgency"] = crisis.get("urgency", "high")
-
-                    # 🔥 priority boost
                     s["score"] = min(s.get("score", 0.5) + 0.3, 1.0)
 
             # -------------------------
-            # 7. DECISION
+            # 6. DECISION LAYER
             # -------------------------
             decisions = self.decision.evaluate(signals)
 
             if not decisions:
-                logger.warning("[ORCHESTRATOR] No signals passed decision filter")
+                logger.warning("[ORCHESTRATOR] No decisions passed filter")
                 return
 
             # -------------------------
-            # 8. INTELLIGENCE
+            # 7. INTELLIGENCE LAYER
             # -------------------------
             intel_items = self.intelligence.run(decisions)
 
@@ -134,13 +126,13 @@ class Orchestrator:
                 logger.warning("[ORCHESTRATOR] No intelligence output")
                 return
 
-            # decision fix
+            # align decisions
             for i, item in enumerate(intel_items):
                 if i < len(decisions):
                     item["decision"] = decisions[i].get("decision", {})
 
             # -------------------------
-            # 9. GENERATION
+            # 8. GENERATION + FEEDBACK LOOP
             # -------------------------
             generated = 0
 
@@ -148,18 +140,16 @@ class Orchestrator:
 
                 try:
                     topic = str(item.get("topic") or "").strip()
-
                     if not topic:
                         continue
 
                     if is_duplicate(topic):
                         continue
 
-                    decision = item.get("decision")
-                    publish = True if not decision else decision.get("publish", False)
+                    decision = item.get("decision", {})
+                    publish = decision.get("publish", False)
 
                     if not publish:
-                        print("SKIPPED:", topic)
                         continue
 
                     narrative = item.get("narrative") or {}
@@ -167,21 +157,39 @@ class Orchestrator:
                     title = narrative.get("title") or topic[:80]
                     content = narrative.get("content") or topic
 
-                    print("GENERATING:", title)
+                    save_post(
+                        title,
+                        content,
+                        signal_topic=topic
+                    )
 
-                    save_post(title, content)
+                    # 🔥 PLATFORM FEEDBACK
+                    store_feedback(
+                        post_title=title,
+                        signal_topic=topic,
+                        engagement_score=decision.get("confidence", 0.5),
+                        outcome="published",
+                        raw=decision
+                    )
 
                     generated += 1
 
                     logger.info(
-                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A') if decision else 'FORCED'}"
+                        f"[GENERATED] {topic} | priority={decision.get('priority', 'N/A')}"
                     )
 
                 except Exception as e:
                     print("GEN ERROR:", e)
                     continue
 
-            print("GENERATED COUNT:", generated)
+            # -------------------------
+            # 9. GLOBAL STATE UPDATE
+            # -------------------------
+            set_state("last_cycle_stats", {
+                "cycle": self.cycle,
+                "generated": generated,
+                "timestamp": time.time()
+            })
 
             if generated == 0:
                 logger.warning("[ORCHESTRATOR] NOTHING GENERATED")
