@@ -20,24 +20,18 @@ class GlobalIntelligenceEngine:
         for signal in signals:
 
             try:
-                # 🔥 KRİTİK FIX: topic fallback
-                topic = str(
-                    signal.get("topic") or
-                    signal.get("title") or
-                    signal.get("text") or
-                    ""
+                topic = (
+                    signal.get("topic")
+                    or signal.get("title")
+                    or signal.get("text")
+                    or ""
                 ).strip()
 
                 if not topic:
-                    print("SKIP EMPTY TOPIC:", signal)
                     continue
 
-                print("PROCESSING:", topic)
-
                 mem = self.memory.load(signal) or {}
-
                 ctx = self.context.build(signal, mem) or {}
-
                 reasoning = self.reasoning.analyze(signal, ctx) or {}
 
                 ctx["insight"] = reasoning.get("insight", "")
@@ -50,31 +44,19 @@ class GlobalIntelligenceEngine:
                     "context": ctx,
                     "reasoning": reasoning,
                     "prediction": prediction,
-                    "insight": reasoning.get("insight", ""),
-                    "actors": ctx.get("actors", []),
-                    "region": ctx.get("region", "global"),
                     "urgency": prediction.get("urgency", "low"),
                 }
 
                 narrative = generate_narrative(intel)
 
-                if not narrative:
-                    print("NO NARRATIVE:", topic)
-
                 intel["narrative"] = narrative or {
                     "title": topic[:80],
-                    "content": topic,
-                    "meta": {}
+                    "content": topic
                 }
 
                 results.append(intel)
 
             except Exception as e:
-                # 🔥 EN KRİTİK SATIR
                 print("INTELLIGENCE ERROR:", e)
-                print("FAILED SIGNAL:", signal)
-                continue
-
-        print("INTEL OUTPUT COUNT:", len(results))
 
         return results
