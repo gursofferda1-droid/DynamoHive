@@ -17,64 +17,89 @@ class GlobalIntelligenceEngine:
 
         results = []
 
+        if not isinstance(signals, list):
+            return results
+
         for signal in signals:
 
             try:
-                # 🔥 KRİTİK FIX: topic fallback
+                # -------------------------
+                # 1. TOPIC NORMALIZATION
+                # -------------------------
                 topic = str(
-                    signal.get("topic") or
-                    signal.get("title") or
-                    signal.get("text") or
-                    ""
+                    signal.get("topic")
+                    or signal.get("title")
+                    or signal.get("text")
+                    or ""
                 ).strip()
 
                 if not topic:
-                    print("SKIP EMPTY TOPIC:", signal)
                     continue
 
-                print("PROCESSING:", topic)
+                # -------------------------
+                # 2. MEMORY LAYER
+                # -------------------------
+                memory = self.memory.load(signal)
+                if memory is None:
+                    memory = {}
 
-                mem = self.memory.load(signal) or {}
+                # -------------------------
+                # 3. CONTEXT BUILD
+                # -------------------------
+                context = self.context.build(signal, memory)
+                if context is None:
+                    context = {}
 
-                ctx = self.context.build(signal, mem) or {}
+                # -------------------------
+                # 4. REASONING
+                # -------------------------
+                reasoning = self.reasoning.analyze(signal, context)
+                if reasoning is None:
+                    reasoning = {}
 
-                reasoning = self.reasoning.analyze(signal, ctx) or {}
+                context["insight"] = reasoning.get("insight", "")
 
-                ctx["insight"] = reasoning.get("insight", "")
+                # -------------------------
+                # 5. PREDICTION
+                # -------------------------
+                prediction = self.prediction.forecast(signal, context)
+                if prediction is None:
+                    prediction = {}
 
-                prediction = self.prediction.forecast(signal, ctx) or {}
-
+                # -------------------------
+                # 6. INTELLIGENCE OBJECT
+                # -------------------------
                 intel = {
                     "topic": topic,
                     "signal": signal,
-                    "context": ctx,
+                    "context": context,
                     "reasoning": reasoning,
                     "prediction": prediction,
                     "insight": reasoning.get("insight", ""),
-                    "actors": ctx.get("actors", []),
-                    "region": ctx.get("region", "global"),
+                    "actors": context.get("actors", []),
+                    "region": context.get("region", "global"),
                     "urgency": prediction.get("urgency", "low"),
                 }
 
+                # -------------------------
+                # 7. NARRATIVE
+                # -------------------------
                 narrative = generate_narrative(intel)
 
                 if not narrative:
-                    print("NO NARRATIVE:", topic)
+                    narrative = {
+                        "title": topic[:80],
+                        "content": topic,
+                        "meta": {}
+                    }
 
-                intel["narrative"] = narrative or {
-                    "title": topic[:80],
-                    "content": topic,
-                    "meta": {}
-                }
+                intel["narrative"] = narrative
 
                 results.append(intel)
 
             except Exception as e:
-                # 🔥 EN KRİTİK SATIR
-                print("INTELLIGENCE ERROR:", e)
-                print("FAILED SIGNAL:", signal)
+                # kritik: sessiz fail değil, kontrollü fail
+                print("[INTELLIGENCE ERROR]", e)
                 continue
-
-        print("INTEL OUTPUT COUNT:", len(results))
 
         return results
