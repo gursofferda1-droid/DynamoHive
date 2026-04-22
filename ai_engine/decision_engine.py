@@ -45,8 +45,8 @@ class DecisionEngine:
                     (urgency_score * 0.20)
                 )
 
-                # 🔥 HARD FILTER (yumuşatılmış)
-                if score < 0.15 and impact < 0.25:
+                # 🔥 YUMUŞATILMIŞ FILTER (FIX)
+                if score < 0.10 and impact < 0.20:
                     continue
 
                 scored.append({
@@ -74,8 +74,8 @@ class DecisionEngine:
         # -------------------------
         # 3. SELECTION
         # -------------------------
-        TOP_K = 5
-        MIN_THRESHOLD = 0.25
+        TOP_K = 10
+        MIN_THRESHOLD = 0.10
 
         selected = []
         used_topics = set()
@@ -96,7 +96,7 @@ class DecisionEngine:
             used_topics.add(topic)
             selected.append(s)
 
-        # fallback → en az 1 içerik
+        # fallback
         if not selected and scored:
             selected = [scored[0]]
 
